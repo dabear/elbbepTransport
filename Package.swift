@@ -9,16 +9,27 @@ let package = Package(
     ],
     products: [
         .library(name: "ElbbepTransport", targets: ["ElbbepTransport"]),
+        .library(name: "LupedKit", targets: ["LupedKit"]),
     ],
     targets: [
         .target(
             name: "ElbbepTransport",
             path: "Sources/ElbbepTransport"
         ),
+        .target(
+            name: "LupedKit",
+            dependencies: ["ElbbepTransport"],
+            path: "Sources/LupedKit"
+        ),
         .testTarget(
             name: "ElbbepTransportTests",
             dependencies: ["ElbbepTransport"],
             path: "Tests/ElbbepTransportTests"
+        ),
+        .testTarget(
+            name: "LupedKitTests",
+            dependencies: ["LupedKit"],
+            path: "Tests/LupedKitTests"
         ),
     ]
 )

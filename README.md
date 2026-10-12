@@ -1,7 +1,14 @@
 # elbbepTransport
 
-`ElbbepTransport` is a Swift package that lets an iOS app talk to one JS-free
-Pebble watch app or watchface directly over Bluetooth, next to the Pebble app.
+This package has two libraries:
+
+- `ElbbepTransport` lets an iOS app talk to one JS-free Pebble watch app or
+  watchface directly over Bluetooth, next to the Pebble app.
+- `LupedKit` builds on it to drive the Luped CGM watchface from any iOS
+  diabetes app, such as Loop or Trio. The host app supplies plain readings and
+  alert state; LupedKit owns the payload, delivery, commands, status and log.
+
+## ElbbepTransport
 
 The phone publishes its own PebbleOS PPoGATT ("Pebble Protocol over GATT")
 service with CoreBluetooth. PebbleOS discovers it on the existing watch
@@ -72,6 +79,54 @@ disabling releases Bluetooth entirely.
   get a watch session and compete for the app.
 - Alloy disables a watchface's outbox whenever a non-system session opens or
   closes, until the watchface restarts or receives a message after starting.
+
+## LupedKit
+
+`LupedTransport` sends a host app's CGM readings and glucose alert settings to
+Luped and keeps Settings → Devices → Pebble state: link status, delivery and
+retries, watch diagnostics, and a communication log. Luped's own settings live
+in `UserDefaults` under the `lupedPebble…` keys (`UserDefaults.lupedPebbleEnabled`
+and friends), which a settings screen can bind to with `@AppStorage`.
+
+The host app adapts its own types:
+
+```swift
+import LupedKit
+
+let luped = LupedTransport(hostName: "Trio")
+luped.diagnosticLog = { kind, message in /* host logging */ }
+luped.snapshotProvider = {
+    LupedSnapshot(
+        readings: recentCGMReadings.map {
+            LupedReading(date: $0.date, milligramsPerDeciliter: $0.mgdl, trend: $0.lupedTrend)
+        },
+        storedSampleCount: recentCGMReadings.count,
+        unit: usesMmol ? .millimolesPerLiter : .milligramsPerDeciliter,
+        alerts: LupedAlertState(
+            configuration: LupedAlertConfiguration(
+                urgentLowMgDL: 55, lowMgDL: 70, highMgDL: 180,
+                urgentLowEnabled: true, lowEnabled: true, highEnabled: true,
+                urgentLowRepeat: 5 * 60, lowRepeat: 15 * 60, highRepeat: nil
+            ),
+            hostAlertsActive: true,
+            hostMuteEnd: hostAlertsMutedUntil
+        )
+    )
+}
+luped.start()
+
+// On every new CGM reading, unit change, alert-setting change or mute change:
+Task { await luped.refresh() }
+```
+
+With Follow Alert Mute on (`lupedPebbleFollowAlertMute`, default on), the
+watch's alarm mask is `0` while `hostMuteEnd` is in the future; refresh when the
+mute ends or is cancelled to restore it. The communication log records why
+watch alarms are on, off or muted, using `hostName`.
+
+The Luped watchface and its `DATA` protocol live in
+[CrimsonBearPebbleWatchFace](https://github.com/dabear/CrimsonBearPebbleWatchFace)
+(`variants/luped/PROTOCOL.md`).
 
 ## Tests
 
