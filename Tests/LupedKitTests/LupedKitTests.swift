@@ -92,3 +92,15 @@ final class LupedAlarmTests: XCTestCase {
         XCTAssertEqual(LupedAlarmSettings.status(.disabled, alerts: none, watchAlarmsEnabled: true, hostName: "Trio"), "Watch alarms off: Trio's glucose alert settings are not available")
     }
 }
+
+final class LupedSettingsTests: XCTestCase {
+    func testRawValueRoundTrips() {
+        let settings = LupedSettings(isEnabled: true, watchfaceUUID: UUID(), alarmsEnabled: false, followAlertMute: false, fullScreen: true)
+        XCTAssertEqual(LupedSettings(rawValue: settings.rawValue), settings)
+    }
+
+    func testMissingKeysUseDefaults() {
+        XCTAssertEqual(LupedSettings(rawValue: [:]), LupedSettings())
+        XCTAssertEqual(LupedSettings(rawValue: [UserDefaults.lupedPebbleWatchfaceUUIDKey: "not a uuid"]).watchfaceUUID, LupedSettings.defaultWatchfaceUUID)
+    }
+}

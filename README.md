@@ -84,9 +84,15 @@ disabling releases Bluetooth entirely.
 
 `LupedTransport` sends a host app's CGM readings and glucose alert settings to
 Luped and keeps Settings → Devices → Pebble state: link status, delivery and
-retries, watch diagnostics, and a communication log. Luped's own settings live
-in `UserDefaults` under the `lupedPebble…` keys (`UserDefaults.lupedPebbleEnabled`
-and friends), which a settings screen can bind to with `@AppStorage`.
+retries, watch diagnostics, and a communication log.
+
+Luped's own settings are a `LupedSettings` value that the host persists.
+Assigning `luped.settings` applies a change. A plugin can keep
+`settings.rawValue` in its own saved state and create the transport with
+`LupedTransport(hostName:settings:)`. An app can instead keep them in
+`UserDefaults` under the `lupedPebble…` keys with
+`LupedTransport(hostName:defaults:)`, which follows changes to those keys, so a
+settings screen can bind to them with `@AppStorage`.
 
 The host app adapts its own types:
 

@@ -40,8 +40,7 @@ public struct LupedSnapshot {
 ///
 /// The host supplies a `snapshotProvider` and calls `refresh()` when readings,
 /// its display unit, its alert settings or its alert mute change. Luped's own
-/// settings (Settings → Devices → Pebble, stored in `UserDefaults`) are observed
-/// here.
+/// settings are applied whenever `settings` changes.
 ///
 /// The latest payload is kept so a watchface `refresh` or a new session can
 /// re-send it. A rejected or unacknowledged send is retried with backoff, and
@@ -50,8 +49,16 @@ public struct LupedSnapshot {
 public final class LupedTransport: PebbleTransportDelegate {
     /// The host app's name in log lines, such as "Loop" or "Trio".
     public let hostName: String
-    private let defaults: UserDefaults
     private let transport: PebbleTransport
+
+    /// Luped's own settings. The host persists them; assigning applies them.
+    public var settings: LupedSettings {
+        didSet {
+            if settings != oldValue {
+                settingsDidChange(from: oldValue)
+            }
+        }
+    }
 
     /// The watch communication log shown in Settings → Devices → Pebble.
     public let communicationLog = LupedCommunicationLog()
@@ -91,47 +98,26 @@ public final class LupedTransport: PebbleTransportDelegate {
     }
     private var pushRetry: Task<Void, Never>?
 
-    public init(hostName: String, defaults: UserDefaults = .standard) {
+    public init(hostName: String, settings: LupedSettings) {
         self.hostName = hostName
-        self.defaults = defaults
-        transport = PebbleTransport(isEnabled: defaults.lupedPebbleEnabled, appUUID: defaults.lupedPebbleWatchfaceUUIDValue)
+        self.settings = settings
+        transport = PebbleTransport(isEnabled: settings.isEnabled, appUUID: settings.watchfaceUUID)
         transport.delegate = self
+    }
 
-        Publishers.Merge(
-            defaults.publisher(for: \.lupedPebbleEnabled).map { _ in () },
-            defaults.publisher(for: \.lupedPebbleWatchfaceUUID).map { _ in () }
+    /// Keeps the settings in `defaults` (Settings → Devices → Pebble) and
+    /// follows changes to them.
+    public convenience init(hostName: String, defaults: UserDefaults = .standard) {
+        self.init(hostName: hostName, settings: defaults.lupedSettings)
+        Publishers.MergeMany(
+            defaults.publisher(for: \.lupedPebbleEnabled).map { _ in () }.eraseToAnyPublisher(),
+            defaults.publisher(for: \.lupedPebbleWatchfaceUUID).map { _ in () }.eraseToAnyPublisher(),
+            defaults.publisher(for: \.lupedPebbleAlarmsEnabled).map { _ in () }.eraseToAnyPublisher(),
+            defaults.publisher(for: \.lupedPebbleFollowAlertMute).map { _ in () }.eraseToAnyPublisher(),
+            defaults.publisher(for: \.lupedPebbleFullScreen).map { _ in () }.eraseToAnyPublisher()
         )
-        .dropFirst(2)
-        .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
-        .sink { [weak self] in self?.applySettings() }
+        .sink { [weak self] in self?.settings = defaults.lupedSettings }
         .store(in: &settingsObservers)
-        defaults.publisher(for: \.lupedPebbleAlarmsEnabled)
-            .dropFirst()
-            .removeDuplicates()
-            .sink { [weak self] enabled in
-                guard let self else { return }
-                self.record(.info, "Watch alarms \(enabled ? "enabled" : "disabled")")
-                Task { await self.refresh() }
-            }
-            .store(in: &settingsObservers)
-        defaults.publisher(for: \.lupedPebbleFollowAlertMute)
-            .dropFirst()
-            .removeDuplicates()
-            .sink { [weak self] follow in
-                guard let self else { return }
-                self.record(.info, "Follow \(self.hostName) alert mute \(follow ? "enabled" : "disabled")")
-                Task { await self.refresh() }
-            }
-            .store(in: &settingsObservers)
-        defaults.publisher(for: \.lupedPebbleFullScreen)
-            .dropFirst()
-            .removeDuplicates()
-            .sink { [weak self] fullScreen in
-                guard let self else { return }
-                self.record(.info, "Watch display: \(fullScreen ? "full-screen ring" : "ring with graph")")
-                Task { await self.refresh() }
-            }
-            .store(in: &settingsObservers)
     }
 
     /// Writes to the communication log and the host's diagnostic log.
@@ -151,9 +137,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         guard let snapshotProvider else {
             return
         }
-        // Check the stored setting too: deleting the Pebble resets other settings,
-        // whose observers fire before the debounced disable is applied.
-        guard transport.isEnabled, defaults.lupedPebbleEnabled else {
+        guard transport.isEnabled, settings.isEnabled else {
             return
         }
 
@@ -170,15 +154,15 @@ public final class LupedTransport: PebbleTransportDelegate {
 
         let alarms = LupedAlarmSettings(
             snapshot.alerts,
-            watchAlarmsEnabled: defaults.lupedPebbleAlarmsEnabled,
-            followHostMute: defaults.lupedPebbleFollowAlertMute
+            watchAlarmsEnabled: settings.alarmsEnabled,
+            followHostMute: settings.followAlertMute
         )
-        let status = LupedAlarmSettings.status(alarms, alerts: snapshot.alerts, watchAlarmsEnabled: defaults.lupedPebbleAlarmsEnabled, hostName: hostName)
+        let status = LupedAlarmSettings.status(alarms, alerts: snapshot.alerts, watchAlarmsEnabled: settings.alarmsEnabled, hostName: hostName)
         if status != alarmStatus {
             alarmStatus = status
             record(.info, status)
         }
-        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, alarms: alarms, fullScreen: defaults.lupedPebbleFullScreen) else {
+        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, alarms: alarms, fullScreen: settings.fullScreen) else {
             record(.info, String(format: "No usable CGM readings among %ld stored samples; nothing to send", snapshot.storedSampleCount))
             return
         }
@@ -189,13 +173,27 @@ public final class LupedTransport: PebbleTransportDelegate {
 
     // MARK: - Settings
 
-    /// Applies Settings → Devices → Pebble.
-    private func applySettings() {
-        let enabled = defaults.lupedPebbleEnabled
-        let uuid = defaults.lupedPebbleWatchfaceUUIDValue
-        guard enabled != transport.isEnabled || uuid != transport.appUUID else {
-            return
+    private func settingsDidChange(from old: LupedSettings) {
+        if settings.alarmsEnabled != old.alarmsEnabled {
+            record(.info, "Watch alarms \(settings.alarmsEnabled ? "enabled" : "disabled")")
         }
+        if settings.followAlertMute != old.followAlertMute {
+            record(.info, "Follow \(hostName) alert mute \(settings.followAlertMute ? "enabled" : "disabled")")
+        }
+        if settings.fullScreen != old.fullScreen {
+            record(.info, "Watch display: \(settings.fullScreen ? "full-screen ring" : "ring with graph")")
+        }
+        if settings.isEnabled != transport.isEnabled || settings.watchfaceUUID != transport.appUUID {
+            applyLink()
+        } else {
+            Task { await refresh() }
+        }
+    }
+
+    /// Turns the watch link on or off, or moves it to another watchface.
+    private func applyLink() {
+        let enabled = settings.isEnabled
+        let uuid = settings.watchfaceUUID
         record(.info, String(format: "Settings changed: %@ for app %@", enabled ? "enabled" : "disabled", uuid.uuidString))
         transport.reconfigure(isEnabled: enabled, appUUID: uuid)
 
@@ -284,7 +282,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             inflightCommand = nil
             record(.fromWatch, "\(reply) for transaction \(transactionID) (bytes \(PebbleTransport.hex(message))): COMMAND \(pending.command)")
             if !acknowledged {
-                status.watchInfoNote = NSLocalizedString("The watch rejected the request; the watchface is probably not running.", comment: "Pebble watch info note: request rejected")
+                status.watchInfoNote = NSLocalizedString("The watch rejected the request; the watchface is probably not running.", bundle: .module, comment: "Pebble watch info note: request rejected")
             } else {
                 awaitDiagnosticsReply()
             }
@@ -331,7 +329,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             guard !Task.isCancelled, let self else { return }
             self.heardFromWatchThisSession = false
             self.record(.error, "No diagnostics reply within 5 s; the next request restarts the watchface first")
-            self.status.watchInfoNote = NSLocalizedString("The watch did not reply. Tap Refresh Watch Info again to restart the watchface and retry.", comment: "Pebble watch info note: no reply")
+            self.status.watchInfoNote = NSLocalizedString("The watch did not reply. Tap Refresh Watch Info again to restart the watchface and retry.", bundle: .module, comment: "Pebble watch info note: no reply")
         }
     }
 
@@ -340,7 +338,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         record(.info, "Send Now requested")
         status.lastResult = nil
         guard transport.isSessionOpen else {
-            status.lastResult = "No watch session; the reading is sent as soon as the watch connects."
+            status.lastResult = NSLocalizedString("No watch session; the reading is sent as soon as the watch connects.", bundle: .module, comment: "Pebble Send Now result: no watch session")
             Task { await refresh() }
             return
         }
@@ -361,7 +359,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         record(.info, "Watch info requested")
         status.watchInfoNote = nil
         guard transport.isSessionOpen else {
-            status.watchInfoNote = NSLocalizedString("The watch is not connected.", comment: "Pebble watch info note: no session")
+            status.watchInfoNote = NSLocalizedString("The watch is not connected.", bundle: .module, comment: "Pebble watch info note: no session")
             return
         }
         diagnosticsRequested = true
@@ -374,7 +372,7 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// Stops and relaunches the watchface. On start, Alloy's ready handshake
     /// reaches the phone and its reply re-enables the watchface's outbox.
     private func restartWatchface() {
-        status.watchInfoNote = NSLocalizedString("Restarting the watchface so it can reply…", comment: "Pebble watch info note: restarting the watchface")
+        status.watchInfoNote = NSLocalizedString("Restarting the watchface so it can reply…", bundle: .module, comment: "Pebble watch info note: restarting the watchface")
         record(.toWatch, "App run state STOP for \(transport.appUUID.uuidString) (restart so the watchface can reply)")
         transport.sendAppRunState(run: false)
         awaitingWatchfaceRestart = Task { [weak self] in
@@ -387,7 +385,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             self.awaitingWatchfaceRestart = nil
             self.diagnosticsRequested = false
             self.record(.error, "The watchface did not start within 15 s")
-            self.status.watchInfoNote = NSLocalizedString("The watchface did not restart. Open it on the watch, then try again.", comment: "Pebble watch info note: restart failed")
+            self.status.watchInfoNote = NSLocalizedString("The watchface did not restart. Open it on the watch, then try again.", bundle: .module, comment: "Pebble watch info note: restart failed")
         }
     }
 

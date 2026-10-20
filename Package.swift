@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "elbbepTransport",
+    defaultLocalization: "en",
     platforms: [
         .iOS(.v15),
         .macOS(.v12),
@@ -19,7 +20,8 @@ let package = Package(
         .target(
             name: "LupedKit",
             dependencies: ["ElbbepTransport"],
-            path: "Sources/LupedKit"
+            path: "Sources/LupedKit",
+            resources: [.process("Resources")]
         ),
         .testTarget(
             name: "ElbbepTransportTests",

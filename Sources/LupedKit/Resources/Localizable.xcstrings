@@ -1,0 +1,24 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "No watch session; the reading is sent as soon as the watch connects.": {
+      "comment": "Pebble Send Now result: no watch session"
+    },
+    "Restarting the watchface so it can reply…": {
+      "comment": "Pebble watch info note: restarting the watchface"
+    },
+    "The watch did not reply. Tap Refresh Watch Info again to restart the watchface and retry.": {
+      "comment": "Pebble watch info note: no reply"
+    },
+    "The watch is not connected.": {
+      "comment": "Pebble watch info note: no session"
+    },
+    "The watch rejected the request; the watchface is probably not running.": {
+      "comment": "Pebble watch info note: request rejected"
+    },
+    "The watchface did not restart. Open it on the watch, then try again.": {
+      "comment": "Pebble watch info note: restart failed"
+    }
+  },
+  "version": "1.0"
+}
