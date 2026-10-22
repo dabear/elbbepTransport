@@ -282,7 +282,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             inflightCommand = nil
             record(.fromWatch, "#\(transactionID) \(reply) · COMMAND \(pending.command)\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
             if !acknowledged {
-                status.watchInfoNote = NSLocalizedString("The watch rejected the request; the watchface is probably not running.", bundle: .module, comment: "Pebble watch info note: request rejected")
+                status.watchInfoNote = NSLocalizedString("The watch rejected the request; the watchface is probably not running.", bundle: .lupedKit, comment: "Pebble watch info note: request rejected")
             } else {
                 awaitDiagnosticsReply()
             }
@@ -329,7 +329,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             guard !Task.isCancelled, let self else { return }
             self.heardFromWatchThisSession = false
             self.record(.error, "No diagnostics reply within 5 s; the next request restarts the watchface first")
-            self.status.watchInfoNote = NSLocalizedString("The watch did not reply. Tap Refresh Watch Info again to restart the watchface and retry.", bundle: .module, comment: "Pebble watch info note: no reply")
+            self.status.watchInfoNote = NSLocalizedString("The watch did not reply. Tap Refresh Watch Info again to restart the watchface and retry.", bundle: .lupedKit, comment: "Pebble watch info note: no reply")
         }
     }
 
@@ -338,7 +338,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         record(.info, "Send Now requested")
         status.lastResult = nil
         guard transport.isSessionOpen else {
-            status.lastResult = NSLocalizedString("No watch session; the reading is sent as soon as the watch connects.", bundle: .module, comment: "Pebble Send Now result: no watch session")
+            status.lastResult = NSLocalizedString("No watch session; the reading is sent as soon as the watch connects.", bundle: .lupedKit, comment: "Pebble Send Now result: no watch session")
             Task { await refresh() }
             return
         }
@@ -359,7 +359,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         record(.info, "Watch info requested")
         status.watchInfoNote = nil
         guard transport.isSessionOpen else {
-            status.watchInfoNote = NSLocalizedString("The watch is not connected.", bundle: .module, comment: "Pebble watch info note: no session")
+            status.watchInfoNote = NSLocalizedString("The watch is not connected.", bundle: .lupedKit, comment: "Pebble watch info note: no session")
             return
         }
         diagnosticsRequested = true
@@ -372,7 +372,7 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// Stops and relaunches the watchface. On start, Alloy's ready handshake
     /// reaches the phone and its reply re-enables the watchface's outbox.
     private func restartWatchface() {
-        status.watchInfoNote = NSLocalizedString("Restarting the watchface so it can reply…", bundle: .module, comment: "Pebble watch info note: restarting the watchface")
+        status.watchInfoNote = NSLocalizedString("Restarting the watchface so it can reply…", bundle: .lupedKit, comment: "Pebble watch info note: restarting the watchface")
         record(.toWatch, "App run state STOP for \(transport.appUUID.uuidString) (restart so the watchface can reply)")
         transport.sendAppRunState(run: false)
         awaitingWatchfaceRestart = Task { [weak self] in
@@ -385,7 +385,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             self.awaitingWatchfaceRestart = nil
             self.diagnosticsRequested = false
             self.record(.error, "The watchface did not start within 15 s")
-            self.status.watchInfoNote = NSLocalizedString("The watchface did not restart. Open it on the watch, then try again.", bundle: .module, comment: "Pebble watch info note: restart failed")
+            self.status.watchInfoNote = NSLocalizedString("The watchface did not restart. Open it on the watch, then try again.", bundle: .lupedKit, comment: "Pebble watch info note: restart failed")
         }
     }
 
