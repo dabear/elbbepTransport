@@ -26,6 +26,21 @@ final class LupedPayloadTests: XCTestCase {
         XCTAssertEqual(payload.readingCount, 2)
     }
 
+    func testLogSummaryAndAlignedDetails() throws {
+        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, alarms: alarms, fullScreen: true))
+        XCTAssertTrue(payload.logSummary.hasPrefix("110 mg/dL ↗ +10 at "), payload.logSummary)
+
+        let lines = payload.logDetails.components(separatedBy: "\n")
+        XCTAssertEqual(lines, [
+            "  history     2 readings: 100 110",
+            "  thresholds  urgent low 55 · low 70 · high 180 mg/dL",
+            "  alarms      urgent low, low, high",
+            "  repeat      urgent low 5 min · low 15 min · high once per episode",
+            "  display     full-screen ring",
+            "  raw         \(payload.data)",
+        ])
+    }
+
     func testMillimolesRoundToOneDecimal() throws {
         let payload = try XCTUnwrap(LupedPayload(readings: readings([122.5]), unit: .millimolesPerLiter, alarms: alarms, fullScreen: false))
         // 122.5 mg/dL = 6.8 mmol/L; thresholds 55/70/180 = 3.1/3.9/10.0.

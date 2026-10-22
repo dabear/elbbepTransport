@@ -269,10 +269,10 @@ public final class LupedTransport: PebbleTransportDelegate {
         // latest reading.
         let command = tuples[LupedMessageKey.command]?.string
         if tuples[PebbleAppMessage.alloyReadyKey] != nil || command == "refresh" {
-            record(.fromWatch, "Watchface requested refresh (\(command.map { "COMMAND \($0)" } ?? "ready handshake"), tuples \(hex))")
+            record(.fromWatch, "Watchface requested refresh (\(command.map { "COMMAND \($0)" } ?? "ready handshake"))\n" + LupedPayload.alignedRows([("tuples", hex)]))
             sendIfNeeded(force: true)
         } else if tuples[LupedMessageKey.diagnostics] == nil {
-            record(.fromWatch, "Watch message (tuples \(hex))")
+            record(.fromWatch, "Watch message\n" + LupedPayload.alignedRows([("tuples", hex)]))
         }
     }
 
@@ -280,7 +280,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         let reply = acknowledged ? "ACK" : "NACK"
         if let pending = inflightCommand, pending.transactionID == transactionID {
             inflightCommand = nil
-            record(.fromWatch, "\(reply) for transaction \(transactionID) (bytes \(PebbleTransport.hex(message))): COMMAND \(pending.command)")
+            record(.fromWatch, "#\(transactionID) \(reply) · COMMAND \(pending.command)\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
             if !acknowledged {
                 status.watchInfoNote = NSLocalizedString("The watch rejected the request; the watchface is probably not running.", bundle: .module, comment: "Pebble watch info note: request rejected")
             } else {
@@ -290,7 +290,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             return
         }
         guard let push = inflightPush, push.transactionID == transactionID else {
-            record(.fromWatch, "\(reply) for transaction \(transactionID) (bytes \(PebbleTransport.hex(message))) matches no pending push; ignored")
+            record(.fromWatch, "#\(transactionID) \(reply) matches no message in flight; ignored\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
             return
         }
         inflightPush = nil
@@ -299,7 +299,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         let elapsed = Int(Date().timeIntervalSince(push.sentAt) * 1_000)
         let readingTime = DateFormatter.localizedString(from: push.payload.latestDate, dateStyle: .none, timeStyle: .medium)
         if acknowledged {
-            record(.fromWatch, "\(reply) for transaction \(transactionID) after \(elapsed) ms (bytes \(PebbleTransport.hex(message))): watch stored reading from \(readingTime), \(push.payload.readingCount) history points")
+            record(.fromWatch, "#\(transactionID) ACK in \(elapsed) ms · watch stored the \(readingTime) reading, \(push.payload.readingCount) history points\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
             deliveredGeneration = push.generation
             pushRetry?.cancel()
             pushRetry = nil
@@ -311,7 +311,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             sendIfNeeded()
         } else {
             // The watch rejects pushes while Luped is not the running watchface.
-            record(.fromWatch, "\(reply) for transaction \(transactionID) after \(elapsed) ms (bytes \(PebbleTransport.hex(message))): watch rejected reading from \(readingTime); the watchface is probably not running")
+            record(.fromWatch, "#\(transactionID) NACK in \(elapsed) ms · watch rejected the \(readingTime) reading; the watchface is probably not running\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
             status.lastRejectedAt = Date()
             scheduleRetry()
         }
@@ -397,13 +397,13 @@ public final class LupedTransport: PebbleTransportDelegate {
         let transactionID = transport.makeTransactionID()
         inflightCommand = (transactionID, "diagnostics")
 
-        record(.toWatch, "Sending transaction \(transactionID): COMMAND diagnostics")
+        record(.toWatch, "#\(transactionID) COMMAND diagnostics")
         transport.push(transactionID: transactionID, tuples: [(LupedMessageKey.command, .cString("diagnostics"))])
 
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(PebbleAppMessage.ackTimeout * 1_000_000_000))
             guard let self, self.inflightCommand?.transactionID == transactionID else { return }
-            self.record(.error, "No reply to transaction \(transactionID) within \(Int(PebbleAppMessage.ackTimeout)) s")
+            self.record(.error, "#\(transactionID) no reply within \(Int(PebbleAppMessage.ackTimeout)) s")
             self.inflightCommand = nil
             self.sendIfNeeded()
         }
@@ -445,7 +445,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         let transactionID = transport.makeTransactionID()
         inflightPush = (transactionID, requestGeneration, payload, Date())
 
-        record(.toWatch, "Sending transaction \(transactionID): \(payload.data)\n\(payload.fieldDescription)")
+        record(.toWatch, "#\(transactionID) DATA  \(payload.logSummary)\n\(payload.logDetails)")
         transport.push(transactionID: transactionID, tuples: [
             (LupedMessageKey.configured, .uint8(1)),
             (LupedMessageKey.data, .cString(payload.data)),
@@ -455,7 +455,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         pushAckTimeout = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(PebbleAppMessage.ackTimeout * 1_000_000_000))
             guard !Task.isCancelled, let self, self.inflightPush?.transactionID == transactionID else { return }
-            self.record(.error, "No reply to transaction \(transactionID) within \(Int(PebbleAppMessage.ackTimeout)) s")
+            self.record(.error, "#\(transactionID) no reply within \(Int(PebbleAppMessage.ackTimeout)) s")
             self.inflightPush = nil
             self.scheduleRetry()
         }

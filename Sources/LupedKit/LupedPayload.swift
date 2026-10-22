@@ -85,10 +85,13 @@ public struct LupedPayload: Equatable {
     let latestDate: Date
     /// Number of readings in the history graph, for diagnostics.
     let readingCount: Int
-    /// Each `DATA` field with its meaning, one per line, for the communication log.
-    let fieldDescription: String
+    /// One line for the communication log, e.g. "7.0 mmol/L ↓ -0.2 at 11:15:02".
+    let logSummary: String
+    /// Aligned label/value lines under the summary, ending with the raw `DATA` JSON.
+    let logDetails: String
 
-    private static let directionNames = ["DoubleDown", "SingleDown", "FortyFiveDown", "Flat", "FortyFiveUp", "SingleUp", "DoubleUp"]
+    /// Indexed by the protocol's direction value (DoubleDown … DoubleUp).
+    private static let trendArrows = ["⇊", "↓", "↘", "→", "↗", "↑", "⇈"]
 
     init?(readings: [LupedReading], unit: LupedUnit, alarms: LupedAlarmSettings, fullScreen: Bool) {
         let readings = readings
@@ -151,20 +154,31 @@ public struct LupedPayload: Equatable {
             (LupedAlarmSettings.highBit, "high"),
         ].filter { alarms.enabledMask & $0.0 != 0 }.map(\.1)
         let time = DateFormatter.localizedString(from: latest.date, dateStyle: .none, timeStyle: .medium)
-        self.fieldDescription = [
-            " 0 protocol version: 1",
-            " 1 glucose: \(values[values.count - 1].stringValue) \(unitName)",
-            " 2 delta: \(Self.rounded(delta, for: unit).stringValue)",
-            " 3 trend: \(Self.directionNames[direction])",
-            " 4 history: \(values.count) readings, oldest first: \(values.map(\.stringValue).joined(separator: " "))",
-            " 5 unit: \(unitName)",
-            " 6-8 thresholds: urgent low \(converted(alarms.urgentLowMgDL).stringValue), low \(converted(alarms.lowMgDL).stringValue), high \(converted(alarms.highMgDL).stringValue)",
-            " 9 alarms (mask \(alarms.enabledMask)): \(zones.isEmpty ? "off" : zones.joined(separator: ", "))\(alarms.mutedUntil.map { ", muted until \(DateFormatter.localizedString(from: $0, dateStyle: .none, timeStyle: .short))" } ?? "")",
-            "10-11 repeat: low \(repeatText(alarms.lowRepeat)), high \(repeatText(alarms.highRepeat))",
-            "12 reading time: \(time) (\(timestamp))",
-            "13 display: \(fullScreen ? "full-screen ring" : "ring with graph")",
-            "14 urgent-low repeat: \(repeatText(alarms.urgentLowRepeat))",
-        ].joined(separator: "\n")
+        let roundedDelta = Self.rounded(delta, for: unit)
+        let deltaText = (roundedDelta.doubleValue > 0 ? "+" : "") + roundedDelta.stringValue
+        self.logSummary = "\(values[values.count - 1].stringValue) \(unitName) \(Self.trendArrows[direction]) \(deltaText) at \(time)"
+
+        var alarmText = zones.isEmpty ? "off" : zones.joined(separator: ", ")
+        if let mutedUntil = alarms.mutedUntil {
+            alarmText += " · muted until \(DateFormatter.localizedString(from: mutedUntil, dateStyle: .none, timeStyle: .short))"
+        }
+        self.logDetails = Self.alignedRows([
+            ("history", "\(values.count) readings: \(values.map(\.stringValue).joined(separator: " "))"),
+            ("thresholds", "urgent low \(converted(alarms.urgentLowMgDL).stringValue) · low \(converted(alarms.lowMgDL).stringValue) · high \(converted(alarms.highMgDL).stringValue) \(unitName)"),
+            ("alarms", alarmText),
+            ("repeat", "urgent low \(repeatText(alarms.urgentLowRepeat)) · low \(repeatText(alarms.lowRepeat)) · high \(repeatText(alarms.highRepeat))"),
+            ("display", fullScreen ? "full-screen ring" : "ring with graph"),
+            ("raw", data),
+        ])
+    }
+
+    /// Indented "label  value" lines with the labels padded to one width, for the
+    /// monospaced communication log.
+    static func alignedRows(_ rows: [(label: String, value: String)]) -> String {
+        let width = rows.map(\.label.count).max() ?? 0
+        return rows
+            .map { "  " + $0.label.padding(toLength: width, withPad: " ", startingAt: 0) + "  " + $0.value }
+            .joined(separator: "\n")
     }
 
     /// Rounds to the watchface's display precision: one decimal for mmol/L, whole mg/dL.
