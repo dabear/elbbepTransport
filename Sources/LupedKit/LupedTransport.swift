@@ -25,16 +25,14 @@ public struct LupedSnapshot {
     /// How many samples the host read, for the log when none are usable.
     public var storedSampleCount: Int
     public var unit: LupedUnit
-    public var alerts: LupedAlertState
     /// Host-issued alert level (0 none, 1 info, 2 warning, 3 critical). The host
     /// evaluates its own alerts and sets this; the watch does not evaluate thresholds.
     public var hostAlertLevel: Int
 
-    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, alerts: LupedAlertState, hostAlertLevel: Int = 0) {
+    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertLevel: Int = 0) {
         self.readings = readings
         self.storedSampleCount = storedSampleCount
         self.unit = unit
-        self.alerts = alerts
         self.hostAlertLevel = hostAlertLevel
     }
 }
@@ -156,17 +154,12 @@ public final class LupedTransport: PebbleTransportDelegate {
             return
         }
 
-        let alarms = LupedAlarmSettings(
-            snapshot.alerts,
-            watchAlarmsEnabled: settings.alarmsEnabled,
-            followHostMute: settings.followAlertMute
-        )
-        let status = LupedAlarmSettings.status(watchAlarmsEnabled: settings.alarmsEnabled)
+        let status = LupedPayload.watchAlarmStatus(watchAlarmsEnabled: settings.alarmsEnabled)
         if status != alarmStatus {
             alarmStatus = status
             record(.info, status)
         }
-        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, alarms: alarms, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel) else {
+        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel) else {
             record(.info, String(format: "No usable CGM readings among %ld stored samples; nothing to send", snapshot.storedSampleCount))
             return
         }
