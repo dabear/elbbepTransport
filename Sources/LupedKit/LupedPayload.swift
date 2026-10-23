@@ -115,24 +115,39 @@ public struct LupedPayload: Equatable {
         }
         let timestamp = Int64(latest.date.timeIntervalSince1970 * 1_000)
 
-        let message: [Any] = [
-            1,
-            values[values.count - 1],
-            Self.rounded(delta, for: unit),
-            direction,
-            values,
-            unit == .millimolesPerLiter ? 1 : 0,
-            converted(alarms.urgentLowMgDL),
-            converted(alarms.lowMgDL),
-            converted(alarms.highMgDL),
-            alarms.enabledMask,
-            minutes(alarms.lowRepeat),
-            minutes(alarms.highRepeat),
-            timestamp,
-            fullScreen ? 1 : 0,
-            minutes(alarms.urgentLowRepeat),
-            hostAlertLevel
+        let unitName = unit == .millimolesPerLiter ? "mmol/L" : "mg/dL"
+        let zones = [
+            (LupedAlarmSettings.urgentLowBit, "urgent low"),
+            (LupedAlarmSettings.lowBit, "low"),
+            (LupedAlarmSettings.highBit, "high"),
+        ].filter { alarms.enabledMask & $0.0 != 0 }.map(\.1)
+        var alarmDescription = "watch alarms \(zones.isEmpty ? "off" : zones.joined(separator: ", "))"
+        if let mutedUntil = alarms.mutedUntil {
+            alarmDescription += " · muted until \(DateFormatter.localizedString(from: mutedUntil, dateStyle: .none, timeStyle: .short))"
+        }
+
+        // Each DATA field paired with the description shown under the summary in
+        // the communication log, so the wire format and its decode share one
+        // definition and cannot drift apart.
+        let fields: [(value: Any, description: String)] = [
+            (1, "protocol version"),
+            (values[values.count - 1], "current glucose (\(unitName))"),
+            (Self.rounded(delta, for: unit), "delta (\(unitName))"),
+            (direction, "trend code \(Self.trendArrows[direction])"),
+            (values, "glucose history (\(values.count) readings)"),
+            (unit == .millimolesPerLiter ? 1 : 0, "\(unitName) display"),
+            (converted(alarms.urgentLowMgDL), "urgent-low threshold (\(unitName))"),
+            (converted(alarms.lowMgDL), "low threshold (\(unitName))"),
+            (converted(alarms.highMgDL), "high threshold (\(unitName))"),
+            (alarms.enabledMask, alarmDescription),
+            (minutes(alarms.lowRepeat), "low repeat interval (minutes)"),
+            (minutes(alarms.highRepeat), "high repeat interval (minutes)"),
+            (timestamp, "timestamp (milliseconds since Unix epoch)"),
+            (fullScreen ? 1 : 0, fullScreen ? "full-screen ring" : "ring with graph"),
+            (minutes(alarms.urgentLowRepeat), "urgent-low repeat interval (minutes)"),
+            (hostAlertLevel, "host-issued alert level: \(Self.alertLevelNames[hostAlertLevel] ?? "unknown")"),
         ]
+        let message = fields.map(\.value)
 
         guard JSONSerialization.isValidJSONObject(message),
               let encoded = try? JSONSerialization.data(withJSONObject: message),
@@ -145,32 +160,11 @@ public struct LupedPayload: Equatable {
         self.latestDate = latest.date
         self.readingCount = readings.count
 
-        func repeatText(_ interval: TimeInterval) -> String {
-            interval >= LupedAlarmSettings.oncePerEpisode ? "once per episode" : "\(minutes(interval)) min"
-        }
-        let unitName = unit == .millimolesPerLiter ? "mmol/L" : "mg/dL"
-        let zones = [
-            (LupedAlarmSettings.urgentLowBit, "urgent low"),
-            (LupedAlarmSettings.lowBit, "low"),
-            (LupedAlarmSettings.highBit, "high"),
-        ].filter { alarms.enabledMask & $0.0 != 0 }.map(\.1)
         let time = DateFormatter.localizedString(from: latest.date, dateStyle: .none, timeStyle: .medium)
         let roundedDelta = Self.rounded(delta, for: unit)
         let deltaText = (roundedDelta.doubleValue > 0 ? "+" : "") + roundedDelta.stringValue
         self.logSummary = "\(values[values.count - 1].stringValue) \(unitName) \(Self.trendArrows[direction]) \(deltaText) at \(time)"
-
-        var alarmText = zones.isEmpty ? "off" : zones.joined(separator: ", ")
-        if let mutedUntil = alarms.mutedUntil {
-            alarmText += " · muted until \(DateFormatter.localizedString(from: mutedUntil, dateStyle: .none, timeStyle: .short))"
-        }
-        self.logDetails = Self.alignedRows([
-            ("history", "\(values.count) readings: \(values.map(\.stringValue).joined(separator: " "))"),
-            ("thresholds", "urgent low \(converted(alarms.urgentLowMgDL).stringValue) · low \(converted(alarms.lowMgDL).stringValue) · high \(converted(alarms.highMgDL).stringValue) \(unitName)"),
-            ("alarms", alarmText),
-            ("repeat", "urgent low \(repeatText(alarms.urgentLowRepeat)) · low \(repeatText(alarms.lowRepeat)) · high \(repeatText(alarms.highRepeat))"),
-            ("display", fullScreen ? "full-screen ring" : "ring with graph"),
-            ("raw", data),
-        ])
+        self.logDetails = Self.decodeTable(fields)
     }
 
     /// Indented "label  value" lines with the labels padded to one width, for the
@@ -181,6 +175,41 @@ public struct LupedPayload: Equatable {
             .map { "  " + $0.label.padding(toLength: width, withPad: " ", startingAt: 0) + "  " + $0.value }
             .joined(separator: "\n")
     }
+
+    /// The raw `DATA` array decoded one field per line for the communication log,
+    /// `index:  value  description`, values left-aligned in a single column so the
+    /// descriptions line up.
+    static func decodeTable(_ fields: [(value: Any, description: String)]) -> String {
+        let values = fields.map { Self.displayString(for: $0.value) }
+        let width = values.map(\.count).max() ?? 0
+        let rows = fields.indices.map { index -> String in
+            let value = values[index].padding(toLength: width, withPad: " ", startingAt: 0)
+            return String(format: "  %2d:  ", index) + value + "  " + fields[index].description
+        }
+        return "raw [\n" + rows.joined(separator: "\n") + "\n]"
+    }
+
+    /// A compact display string for one `DATA` value. The history array is
+    /// abbreviated to its first two and last readings so the value column stays narrow.
+    private static func displayString(for value: Any) -> String {
+        switch value {
+        case let number as NSDecimalNumber:
+            return number.stringValue
+        case let array as [NSDecimalNumber]:
+            let parts = array.map(\.stringValue)
+            guard parts.count > 4 else { return "[" + parts.joined(separator: ", ") + "]" }
+            return "[\(parts[0]), \(parts[1]), …, \(parts[parts.count - 1])]"
+        case let value as Int64:
+            return String(value)
+        case let value as Int:
+            return String(value)
+        default:
+            return String(describing: value)
+        }
+    }
+
+    /// Names for the host-issued alert level carried in `DATA` index 15.
+    private static let alertLevelNames: [Int: String] = [0: "none", 1: "info", 2: "warning", 3: "critical"]
 
     /// Rounds to the watchface's display precision: one decimal for mmol/L, whole mg/dL.
     ///

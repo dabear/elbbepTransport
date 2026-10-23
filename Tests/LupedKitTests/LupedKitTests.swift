@@ -32,18 +32,34 @@ final class LupedPayloadTests: XCTestCase {
         XCTAssertTrue(payload.data.hasSuffix(",2]"), payload.data)
     }
 
-    func testLogSummaryAndAlignedDetails() throws {
+    func testLogSummaryAndDecodedDetails() throws {
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, alarms: alarms, fullScreen: true))
         XCTAssertTrue(payload.logSummary.hasPrefix("110 mg/dL ↗ +10 at "), payload.logSummary)
 
+        let timestamp = Int64(start.addingTimeInterval(300).timeIntervalSince1970 * 1_000)
         let lines = payload.logDetails.components(separatedBy: "\n")
-        XCTAssertEqual(lines, [
-            "  history     2 readings: 100 110",
-            "  thresholds  urgent low 55 · low 70 · high 180 mg/dL",
-            "  alarms      urgent low, low, high",
-            "  repeat      urgent low 5 min · low 15 min · high once per episode",
-            "  display     full-screen ring",
-            "  raw         \(payload.data)",
+        XCTAssertEqual(lines.first, "raw [")
+        XCTAssertEqual(lines.last, "]")
+
+        // Collapse the alignment padding so each decoded field can be compared.
+        let decoded = lines.dropFirst().dropLast().map { $0.split(separator: " ").joined(separator: " ") }
+        XCTAssertEqual(decoded, [
+            "0: 1 protocol version",
+            "1: 110 current glucose (mg/dL)",
+            "2: 10 delta (mg/dL)",
+            "3: 4 trend code ↗",
+            "4: [100, 110] glucose history (2 readings)",
+            "5: 0 mg/dL display",
+            "6: 55 urgent-low threshold (mg/dL)",
+            "7: 70 low threshold (mg/dL)",
+            "8: 180 high threshold (mg/dL)",
+            "9: 7 watch alarms urgent low, low, high",
+            "10: 15 low repeat interval (minutes)",
+            "11: 1440 high repeat interval (minutes)",
+            "12: \(timestamp) timestamp (milliseconds since Unix epoch)",
+            "13: 1 full-screen ring",
+            "14: 5 urgent-low repeat interval (minutes)",
+            "15: 0 host-issued alert level: none",
         ])
     }
 
