@@ -292,7 +292,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         let elapsed = Int(Date().timeIntervalSince(push.sentAt) * 1_000)
         let readingTime = DateFormatter.localizedString(from: push.payload.latestDate, dateStyle: .none, timeStyle: .medium)
         if acknowledged {
-            record(.fromWatch, "#\(transactionID) ACK in \(elapsed) ms · watch stored the \(readingTime) reading, \(push.payload.readingCount) history points\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
+            record(.fromWatch, "#\(transactionID) ACK in \(elapsed) ms · watch stored the \(readingTime) reading, \(push.payload.readingCount == 0 ? "no history (full-screen ring)" : "\(push.payload.readingCount) history points")\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
             deliveredGeneration = push.generation
             pushRetry?.cancel()
             pushRetry = nil

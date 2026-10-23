@@ -47,7 +47,8 @@ public struct LupedPayload: Equatable {
     let data: String
     /// Start date of the latest reading, for diagnostics.
     let latestDate: Date
-    /// Number of readings in the history graph, for diagnostics.
+    /// Number of history readings sent (index 4), for diagnostics. `0` in
+    /// full-screen mode, which has no graph.
     let readingCount: Int
     /// One line for the communication log, e.g. "7.0 mmol/L ↓ -0.2 at 11:15:02".
     let logSummary: String
@@ -79,6 +80,9 @@ public struct LupedPayload: Equatable {
         let delta = previous.map { unit.value(fromMilligramsPerDeciliter: latest.milligramsPerDeciliter) - unit.value(fromMilligramsPerDeciliter: $0.milligramsPerDeciliter) } ?? 0
         let direction = latest.trend?.rawValue ?? Self.directionIndex(from: previous, to: latest)
         let timestamp = Int64(latest.date.timeIntervalSince1970 * 1_000)
+        // The full-screen ring has no graph, so it gets no history. Turning
+        // full-screen off sends a new DATA right away, which brings the history back.
+        let history = fullScreen ? [] : values
         let unitName = unit == .millimolesPerLiter ? "mmol/L" : "mg/dL"
 
         // Each DATA field paired with the description shown under the summary in the
@@ -91,7 +95,7 @@ public struct LupedPayload: Equatable {
             (values[values.count - 1], "current glucose (\(unitName))"),
             (Self.rounded(delta, for: unit), "delta (\(unitName))"),
             (direction, "trend code \(Self.trendArrows[direction])"),
-            (values, "glucose history (\(values.count) readings)"),
+            (history, fullScreen ? "glucose history (not sent: the full-screen ring has no graph)" : "glucose history (\(history.count) readings)"),
             (unit == .millimolesPerLiter ? 1 : 0, "\(unitName) display"),
             (timestamp, "timestamp (milliseconds since Unix epoch)"),
             (fullScreen ? 1 : 0, fullScreen ? "full-screen ring" : "ring with graph"),
@@ -108,7 +112,7 @@ public struct LupedPayload: Equatable {
 
         self.data = data
         self.latestDate = latest.date
-        self.readingCount = readings.count
+        self.readingCount = history.count
 
         let time = DateFormatter.localizedString(from: latest.date, dateStyle: .none, timeStyle: .medium)
         let roundedDelta = Self.rounded(delta, for: unit)

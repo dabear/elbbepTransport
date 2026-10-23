@@ -15,13 +15,22 @@ final class LupedPayloadTests: XCTestCase {
     }
 
     func testMilligramsPayload() throws {
-        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, fullScreen: true))
+        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, fullScreen: false))
         let timestamp = Int64(start.addingTimeInterval(300).timeIntervalSince1970 * 1_000)
         // Minimal Luped protocol: [version, glucose, delta, trend, history,
         // unitsFlag, timestamp, fullScreen, hostAlertLevel]. No thresholds travel;
         // the trailing 0 is the host-issued alert level.
-        XCTAssertEqual(payload.data, "[1,110,10,4,[100,110],0,\(timestamp),1,0]")
+        XCTAssertEqual(payload.data, "[1,110,10,4,[100,110],0,\(timestamp),0,0]")
         XCTAssertEqual(payload.readingCount, 2)
+    }
+
+    // The full-screen ring has no graph: the history is sent empty, while the
+    // current value, delta and trend still come from the full readings.
+    func testFullScreenSendsNoHistory() throws {
+        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, fullScreen: true))
+        let timestamp = Int64(start.addingTimeInterval(300).timeIntervalSince1970 * 1_000)
+        XCTAssertEqual(payload.data, "[1,110,10,4,[],0,\(timestamp),1,0]")
+        XCTAssertEqual(payload.readingCount, 0)
     }
 
     func testHostAlertLevelIsLastField() throws {
@@ -45,7 +54,7 @@ final class LupedPayloadTests: XCTestCase {
             "1: 110 current glucose (mg/dL)",
             "2: 10 delta (mg/dL)",
             "3: 4 trend code ↗",
-            "4: [100, 110] glucose history (2 readings)",
+            "4: [] glucose history (not sent: the full-screen ring has no graph)",
             "5: 0 mg/dL display",
             "6: \(timestamp) timestamp (milliseconds since Unix epoch)",
             "7: 1 full-screen ring",
