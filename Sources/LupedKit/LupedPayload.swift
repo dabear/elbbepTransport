@@ -93,7 +93,7 @@ public struct LupedPayload: Equatable {
     /// Indexed by the protocol's direction value (DoubleDown … DoubleUp).
     private static let trendArrows = ["⇊", "↓", "↘", "→", "↗", "↑", "⇈"]
 
-    init?(readings: [LupedReading], unit: LupedUnit, alarms: LupedAlarmSettings, fullScreen: Bool) {
+    init?(readings: [LupedReading], unit: LupedUnit, alarms: LupedAlarmSettings, fullScreen: Bool, hostAlertLevel: Int = 0) {
         let readings = readings
             .sorted { $0.date < $1.date }
             .suffix(12)
@@ -130,7 +130,8 @@ public struct LupedPayload: Equatable {
             minutes(alarms.highRepeat),
             timestamp,
             fullScreen ? 1 : 0,
-            minutes(alarms.urgentLowRepeat)
+            minutes(alarms.urgentLowRepeat),
+            hostAlertLevel
         ]
 
         guard JSONSerialization.isValidJSONObject(message),

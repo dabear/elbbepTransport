@@ -22,8 +22,14 @@ final class LupedPayloadTests: XCTestCase {
     func testMilligramsPayload() throws {
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, alarms: alarms, fullScreen: true))
         let timestamp = Int64(start.addingTimeInterval(300).timeIntervalSince1970 * 1_000)
-        XCTAssertEqual(payload.data, "[1,110,10,4,[100,110],0,55,70,180,7,15,1440,\(timestamp),1,5]")
+        // Trailing 0 is the host-issued alert level (index 15), none by default.
+        XCTAssertEqual(payload.data, "[1,110,10,4,[100,110],0,55,70,180,7,15,1440,\(timestamp),1,5,0]")
         XCTAssertEqual(payload.readingCount, 2)
+    }
+
+    func testHostAlertLevelIsLastField() throws {
+        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, alarms: alarms, fullScreen: false, hostAlertLevel: 2))
+        XCTAssertTrue(payload.data.hasSuffix(",2]"), payload.data)
     }
 
     func testLogSummaryAndAlignedDetails() throws {
