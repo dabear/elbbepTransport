@@ -11,11 +11,22 @@ private enum LupedMessageKey {
 }
 
 /// Luped's delivery policy for readings.
-private enum LupedDelivery {
+enum LupedDelivery {
     /// Backoff for re-sending a rejected or unacknowledged reading. The phone
     /// cannot observe the watchface starting, and Luped asks for data only once.
     static let initialRetryDelay: TimeInterval = 30
     static let maximumRetryDelay: TimeInterval = 300
+
+    enum Unchanged: Equatable { case delivered, inFlight }
+
+    /// Whether a host refresh produced `DATA` the watch already has (acknowledged
+    /// in this session) or is about to get (in flight), so it needn't be sent.
+    /// Watch refresh requests, new sessions and Send Now always send.
+    static func unchangedData(_ data: String, delivered: String?, inFlight: String?) -> Unchanged? {
+        if data == inFlight { return .inFlight }
+        if data == delivered { return .delivered }
+        return nil
+    }
 }
 
 /// The glucose and alert state a host app supplies for the next Luped payload.
@@ -85,6 +96,9 @@ public final class LupedTransport: PebbleTransportDelegate {
     private var requestGeneration = 0
     private var deliveredGeneration = 0
     private var inflightPush: (transactionID: UInt8, generation: Int, payload: LupedPayload, sentAt: Date)?
+    /// The `DATA` the watch acknowledged in this session. A host refresh that
+    /// produces the same `DATA` is not sent again; cleared when the session resets.
+    private var deliveredData: String?
     /// A COMMAND push awaiting the watch's ACK; pushes are sent one at a time.
     private var inflightCommand: (transactionID: UInt8, command: String)?
     private var diagnosticsRequested = false
@@ -168,7 +182,16 @@ public final class LupedTransport: PebbleTransportDelegate {
         }
 
         latestPayload = payload
-        requestSend()
+        switch LupedDelivery.unchangedData(payload.data, delivered: deliveredData, inFlight: inflightPush?.payload.data) {
+        case .delivered:
+            requestGeneration = deliveredGeneration
+            record(.info, "Unchanged DATA; the watch already has it, not sent again")
+        case .inFlight:
+            requestGeneration = max(deliveredGeneration, inflightPush?.generation ?? 0)
+            record(.info, "Unchanged DATA; the same message is already on its way")
+        case nil:
+            requestSend()
+        }
     }
 
     // MARK: - Settings
@@ -232,6 +255,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             record(.info, "Session reset before the watch acknowledged the pushed reading")
         }
         inflightPush = nil
+        deliveredData = nil
         pushAckTimeout?.cancel()
         pushAckTimeout = nil
         // A new session re-sends the reading itself.
@@ -298,6 +322,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         if acknowledged {
             record(.fromWatch, "#\(transactionID) ACK in \(elapsed) ms · watch stored the \(readingTime) reading, \(push.payload.readingCount == 0 ? "no history (full-screen ring)" : "\(push.payload.readingCount) history points")\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
             deliveredGeneration = push.generation
+            deliveredData = push.payload.data
             pushRetry?.cancel()
             pushRetry = nil
             retryDelay = 0

@@ -122,3 +122,24 @@ final class LupedSettingsTests: XCTestCase {
         XCTAssertEqual(LupedSettings(rawValue: [UserDefaults.lupedPebbleWatchfaceUUIDKey: "not a uuid"]).watchfaceUUID, LupedSettings.defaultWatchfaceUUID)
     }
 }
+
+final class LupedDeliveryTests: XCTestCase {
+    func testNewDataIsSent() {
+        XCTAssertNil(LupedDelivery.unchangedData("[1,110]", delivered: "[1,100]", inFlight: nil))
+        XCTAssertNil(LupedDelivery.unchangedData("[1,110]", delivered: nil, inFlight: nil), "nothing delivered yet in this session")
+    }
+
+    func testDataTheWatchAlreadyHasIsSkipped() {
+        XCTAssertEqual(LupedDelivery.unchangedData("[1,110]", delivered: "[1,110]", inFlight: nil), .delivered)
+    }
+
+    // A second host refresh while the same message is still awaiting its ACK
+    // must not queue a back-to-back duplicate.
+    func testDataAlreadyInFlightIsSkipped() {
+        XCTAssertEqual(LupedDelivery.unchangedData("[1,110]", delivered: "[1,100]", inFlight: "[1,110]"), .inFlight)
+    }
+
+    func testAChangedAlertLevelIsSent() {
+        XCTAssertNil(LupedDelivery.unchangedData("[1,110,0,3,[],0,1,0,2]", delivered: "[1,110,0,3,[],0,1,0,0]", inFlight: nil))
+    }
+}
