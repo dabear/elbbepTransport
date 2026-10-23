@@ -161,7 +161,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             watchAlarmsEnabled: settings.alarmsEnabled,
             followHostMute: settings.followAlertMute
         )
-        let status = LupedAlarmSettings.status(alarms, alerts: snapshot.alerts, watchAlarmsEnabled: settings.alarmsEnabled, hostName: hostName)
+        let status = LupedAlarmSettings.status(watchAlarmsEnabled: settings.alarmsEnabled)
         if status != alarmStatus {
             alarmStatus = status
             record(.info, status)

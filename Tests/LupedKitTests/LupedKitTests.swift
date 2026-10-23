@@ -95,38 +95,18 @@ final class LupedAlarmTests: XCTestCase {
         XCTAssertEqual(alarms.enabledMask, LupedAlarmSettings.urgentLowBit | LupedAlarmSettings.lowBit)
         XCTAssertEqual(alarms.lowRepeat, LupedAlarmSettings.oncePerEpisode)
         XCTAssertNil(alarms.mutedUntil)
-        XCTAssertEqual(LupedAlarmSettings.status(alarms, alerts: state, watchAlarmsEnabled: true, hostName: "Loop"), "Watch alarms on")
     }
 
-    func testFollowedMuteSendsZeroMaskUntilItEnds() {
-        let end = Date().addingTimeInterval(1_800)
-        let state = LupedAlertState(configuration: configuration, hostAlertsActive: true, hostMuteEnd: end)
-        let alarms = LupedAlarmSettings(state, watchAlarmsEnabled: true, followHostMute: true)
-        XCTAssertEqual(alarms.enabledMask, 0)
-        XCTAssertEqual(alarms.mutedUntil, end)
-        XCTAssertTrue(LupedAlarmSettings.status(alarms, alerts: state, watchAlarmsEnabled: true, hostName: "Trio").hasSuffix(": Trio's alerts are muted"))
-    }
-
-    func testIgnoredMuteKeepsAlarmsOn() {
-        let state = LupedAlertState(configuration: configuration, hostAlertsActive: true, hostMuteEnd: Date().addingTimeInterval(600))
-        let alarms = LupedAlarmSettings(state, watchAlarmsEnabled: true, followHostMute: false)
-        XCTAssertEqual(alarms.enabledMask, 3)
-        XCTAssertTrue(LupedAlarmSettings.status(alarms, alerts: state, watchAlarmsEnabled: true, hostName: "Loop").hasSuffix("but Follow Loop Alert Mute is turned off"))
-    }
-
-    func testOffReasons() {
-        let cgmAlerts = LupedAlertState(configuration: configuration, hostAlertsActive: false, hostMuteEnd: nil)
-        XCTAssertEqual(LupedAlarmSettings(cgmAlerts, watchAlarmsEnabled: true, followHostMute: true).enabledMask, 0)
-        XCTAssertEqual(
-            LupedAlarmSettings.status(.disabled, alerts: cgmAlerts, watchAlarmsEnabled: true, hostName: "Loop"),
-            "Watch alarms off: Loop leaves glucose alerts to the CGM's own alerts"
-        )
-        let watchOff = LupedAlertState(configuration: configuration, hostAlertsActive: true, hostMuteEnd: nil)
-        XCTAssertEqual(LupedAlarmSettings(watchOff, watchAlarmsEnabled: false, followHostMute: true).enabledMask, 0)
-        XCTAssertEqual(LupedAlarmSettings.status(.disabled, alerts: watchOff, watchAlarmsEnabled: false, hostName: "Loop"), "Watch alarms off: Watch Alarms is turned off")
+    func testNoConfigurationDisablesAlarms() {
         let none = LupedAlertState(configuration: nil, hostAlertsActive: true, hostMuteEnd: nil)
         XCTAssertEqual(LupedAlarmSettings(none, watchAlarmsEnabled: true, followHostMute: true), .disabled)
-        XCTAssertEqual(LupedAlarmSettings.status(.disabled, alerts: none, watchAlarmsEnabled: true, hostName: "Trio"), "Watch alarms off: Trio's glucose alert settings are not available")
+    }
+
+    // The host issues the alerts (DATA index 15) and applies its own mute, so the
+    // watch-side status reports only the user's Watch Alarms switch.
+    func testStatusReflectsWatchAlarmsSwitch() {
+        XCTAssertEqual(LupedAlarmSettings.status(watchAlarmsEnabled: true), "Watch alarms on")
+        XCTAssertEqual(LupedAlarmSettings.status(watchAlarmsEnabled: false), "Watch alarms off: Watch Alarms is turned off")
     }
 }
 

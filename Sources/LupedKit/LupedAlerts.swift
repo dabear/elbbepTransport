@@ -77,27 +77,10 @@ extension LupedAlarmSettings {
         )
     }
 
-    /// Whether the watch alarms are on, off or muted, and why, for the communication log.
-    static func status(_ alarms: LupedAlarmSettings, alerts: LupedAlertState, watchAlarmsEnabled: Bool, hostName: String) -> String {
-        let time = { DateFormatter.localizedString(from: $0, dateStyle: .none, timeStyle: .short) }
-        guard alerts.configuration != nil else {
-            return "Watch alarms off: \(hostName)'s glucose alert settings are not available"
-        }
-        if !watchAlarmsEnabled {
-            return "Watch alarms off: Watch Alarms is turned off"
-        }
-        if !alerts.hostAlertsActive {
-            return "Watch alarms off: \(hostName) leaves glucose alerts to the CGM's own alerts"
-        }
-        if let mutedUntil = alarms.mutedUntil {
-            return "Watch alarms muted until \(time(mutedUntil)): \(hostName)'s alerts are muted"
-        }
-        if alarms.enabledMask == 0 {
-            return "Watch alarms off: urgent low, low and high alerts are all turned off in Glucose Alert Settings"
-        }
-        if let hostMuteEnd = alerts.hostMuteEnd {
-            return "Watch alarms on: \(hostName)'s alerts are muted until \(time(hostMuteEnd)), but Follow \(hostName) Alert Mute is turned off"
-        }
-        return "Watch alarms on"
+    /// Whether the watch alarms are on, for the communication log. The host issues
+    /// the alerts itself (DATA index 15) and applies its own alert mute, so the only
+    /// control on the watch is the user's Watch Alarms switch — that is all this reports.
+    static func status(watchAlarmsEnabled: Bool) -> String {
+        watchAlarmsEnabled ? "Watch alarms on" : "Watch alarms off: Watch Alarms is turned off"
     }
 }
