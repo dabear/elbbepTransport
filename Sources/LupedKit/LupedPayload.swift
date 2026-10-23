@@ -162,7 +162,7 @@ public struct LupedPayload: Equatable {
         }
     }
 
-    /// Names for the host-issued alert level carried in `DATA` index 15.
+    /// Names for the host-issued alert level carried in `DATA` index 8.
     private static let alertLevelNames: [Int: String] = [0: "none", 1: "info", 2: "warning", 3: "critical"]
 
     /// Rounds to the watchface's display precision: one decimal for mmol/L, whole mg/dL.

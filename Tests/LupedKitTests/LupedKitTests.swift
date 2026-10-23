@@ -103,7 +103,7 @@ final class LupedPayloadTests: XCTestCase {
 }
 
 final class LupedAlarmStatusTests: XCTestCase {
-    // The host issues the alerts (DATA index 10) and applies its own mute, so the
+    // The host issues the alerts (DATA index 8) and applies its own mute, so the
     // watch-side status reports only the user's Watch Alarms switch.
     func testStatusReflectsWatchAlarmsSwitch() {
         XCTAssertEqual(LupedPayload.watchAlarmStatus(watchAlarmsEnabled: true), "Watch alarms on")
