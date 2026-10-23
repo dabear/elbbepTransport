@@ -115,7 +115,6 @@ public final class LupedTransport: PebbleTransportDelegate {
             defaults.publisher(for: \.lupedPebbleEnabled).map { _ in () }.eraseToAnyPublisher(),
             defaults.publisher(for: \.lupedPebbleWatchfaceUUID).map { _ in () }.eraseToAnyPublisher(),
             defaults.publisher(for: \.lupedPebbleAlarmsEnabled).map { _ in () }.eraseToAnyPublisher(),
-            defaults.publisher(for: \.lupedPebbleFollowAlertMute).map { _ in () }.eraseToAnyPublisher(),
             defaults.publisher(for: \.lupedPebbleFullScreen).map { _ in () }.eraseToAnyPublisher()
         )
         .sink { [weak self] in self?.settings = defaults.lupedSettings }
@@ -173,9 +172,6 @@ public final class LupedTransport: PebbleTransportDelegate {
     private func settingsDidChange(from old: LupedSettings) {
         if settings.alarmsEnabled != old.alarmsEnabled {
             record(.info, "Watch alarms \(settings.alarmsEnabled ? "enabled" : "disabled")")
-        }
-        if settings.followAlertMute != old.followAlertMute {
-            record(.info, "Follow \(hostName) alert mute \(settings.followAlertMute ? "enabled" : "disabled")")
         }
         if settings.fullScreen != old.fullScreen {
             record(.info, "Watch display: \(settings.fullScreen ? "full-screen ring" : "ring with graph")")

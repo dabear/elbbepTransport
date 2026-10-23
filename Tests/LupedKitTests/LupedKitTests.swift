@@ -95,7 +95,7 @@ final class LupedAlarmStatusTests: XCTestCase {
 
 final class LupedSettingsTests: XCTestCase {
     func testRawValueRoundTrips() {
-        let settings = LupedSettings(isEnabled: true, watchfaceUUID: UUID(), alarmsEnabled: false, followAlertMute: false, fullScreen: true)
+        let settings = LupedSettings(isEnabled: true, watchfaceUUID: UUID(), alarmsEnabled: false, fullScreen: true)
         XCTAssertEqual(LupedSettings(rawValue: settings.rawValue), settings)
     }
 

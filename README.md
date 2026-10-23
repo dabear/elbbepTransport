@@ -108,27 +108,21 @@ luped.snapshotProvider = {
         },
         storedSampleCount: recentCGMReadings.count,
         unit: usesMmol ? .millimolesPerLiter : .milligramsPerDeciliter,
-        alerts: LupedAlertState(
-            configuration: LupedAlertConfiguration(
-                urgentLowMgDL: 55, lowMgDL: 70, highMgDL: 180,
-                urgentLowEnabled: true, lowEnabled: true, highEnabled: true,
-                urgentLowRepeat: 5 * 60, lowRepeat: 15 * 60, highRepeat: nil
-            ),
-            hostAlertsActive: true,
-            hostMuteEnd: hostAlertsMutedUntil
-        )
+        // Host-issued alert level: 0 none, 1 info, 2 warning, 3 critical.
+        hostAlertLevel: currentWatchAlertLevel
     )
 }
 luped.start()
 
-// On every new CGM reading, unit change, alert-setting change or mute change:
+// On every new CGM reading, or when the host issues or clears a glucose alert:
 Task { await luped.refresh() }
 ```
 
-With Follow Alert Mute on (`lupedPebbleFollowAlertMute`, default on), the
-watch's alarm mask is `0` while `hostMuteEnd` is in the future; refresh when the
-mute ends or is cancelled to restore it. The communication log records why
-watch alarms are on, off or muted, using `hostName`.
+Glucose alerts are host-issued: the host evaluates its own alerts and passes the
+highest active level to the watch via `hostAlertLevel`, and the watch buzzes when
+it rises. The watch does not evaluate thresholds, and it colours its ring from its
+own built-in low/high. The communication log records whether watch alarms are on
+or off (the user's Watch Alarms switch), using `hostName`.
 
 The Luped watchface and its `DATA` protocol live in
 [CrimsonBearPebbleWatchFace](https://github.com/dabear/CrimsonBearPebbleWatchFace)
