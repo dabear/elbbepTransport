@@ -28,12 +28,16 @@ public struct LupedSnapshot {
     /// Host-issued alert level (0 none, 1 info, 2 warning, 3 critical). The host
     /// evaluates its own alerts and sets this; the watch does not evaluate thresholds.
     public var hostAlertLevel: Int
+    /// Why the level is what it is, for the communication log only: the active
+    /// alerts behind a non-zero level, or why it is 0. Not sent to the watch.
+    public var hostAlertReason: String?
 
-    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertLevel: Int = 0) {
+    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertLevel: Int = 0, hostAlertReason: String? = nil) {
         self.readings = readings
         self.storedSampleCount = storedSampleCount
         self.unit = unit
         self.hostAlertLevel = hostAlertLevel
+        self.hostAlertReason = hostAlertReason
     }
 }
 
@@ -158,7 +162,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             alarmStatus = status
             record(.info, status)
         }
-        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel) else {
+        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel, hostAlertReason: snapshot.hostAlertReason) else {
             record(.info, String(format: "No usable CGM readings among %ld stored samples; nothing to send", snapshot.storedSampleCount))
             return
         }

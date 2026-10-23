@@ -33,6 +33,15 @@ final class LupedPayloadTests: XCTestCase {
         XCTAssertEqual(payload.readingCount, 0)
     }
 
+    // The reason only annotates the log; the wire array is unchanged.
+    func testHostAlertReasonIsLoggedNotSent() throws {
+        let plain = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 0))
+        let annotated = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 0, hostAlertReason: "no active alerts from Loop"))
+        XCTAssertEqual(annotated.data, plain.data)
+        let last = try XCTUnwrap(annotated.logDetails.components(separatedBy: "\n").dropLast().last)
+        XCTAssertTrue(last.hasSuffix("host-issued alert level: none (no active alerts from Loop)"), last)
+    }
+
     func testHostAlertLevelIsLastField() throws {
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 2))
         XCTAssertTrue(payload.data.hasSuffix(",2]"), payload.data)

@@ -65,7 +65,7 @@ public struct LupedPayload: Equatable {
         watchAlarmsEnabled ? "Watch alarms on" : "Watch alarms off: Watch Alarms is turned off"
     }
 
-    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertLevel: Int = 0) {
+    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertLevel: Int = 0, hostAlertReason: String? = nil) {
         let readings = readings
             .sorted { $0.date < $1.date }
             .suffix(12)
@@ -99,7 +99,7 @@ public struct LupedPayload: Equatable {
             (unit == .millimolesPerLiter ? 1 : 0, "\(unitName) display"),
             (timestamp, "timestamp (milliseconds since Unix epoch)"),
             (fullScreen ? 1 : 0, fullScreen ? "full-screen ring" : "ring with graph"),
-            (hostAlertLevel, "host-issued alert level: \(Self.alertLevelNames[hostAlertLevel] ?? "unknown")"),
+            (hostAlertLevel, "host-issued alert level: \(Self.alertLevelNames[hostAlertLevel] ?? "unknown")" + (hostAlertReason.map { " (\($0))" } ?? "")),
         ]
         let message = fields.map(\.value)
 
