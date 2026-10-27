@@ -154,3 +154,28 @@ final class LupedDeliveryTests: XCTestCase {
         XCTAssertNil(LupedDelivery.unchangedData("[1,110,0,3,[],0,1,0,2]", delivered: "[1,110,0,3,[],0,1,0,0]", inFlight: nil))
     }
 }
+
+final class LupedWatchDiagnosticsLogTests: XCTestCase {
+    // A version-2 snapshot decodes one line per field, with the latency buckets
+    // shown inline, and every field has a description.
+    func testDiagnosticsDecodeOneLinePerField() throws {
+        var values: [Any] = [2, 1_792_957_000_000, 85] + Array(repeating: 0, count: 27)
+        values.append([3, 1, 0, 0, 0, 0, 0, 0])  // index 30: latency buckets
+        values += Array(repeating: 0, count: 7)
+        XCTAssertEqual(values.count, LupedWatchDiagnostics.fieldDescriptions.count)
+        let json = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: values), encoding: .utf8))
+
+        let lines = LupedWatchDiagnostics.logDecode(json: json).components(separatedBy: "\n")
+        XCTAssertEqual(lines.first, "raw [")
+        XCTAssertEqual(lines.count, values.count + 2)
+        let decoded = lines.dropFirst().dropLast().map { $0.split(separator: " ").joined(separator: " ") }
+        XCTAssertEqual(decoded[2], "2: 85 battery (%)")
+        XCTAssertTrue(decoded[30].hasPrefix("30: [3, 1, 0, 0, 0, 0, 0, 0] refresh responses by latency"), decoded[30])
+        XCTAssertFalse(decoded.contains { $0.hasSuffix(" unknown") })
+    }
+
+    func testUnknownDiagnosticsFormatIsLoggedRaw() {
+        XCTAssertEqual(LupedWatchDiagnostics.logDecode(json: "[1,2,3]"), "[1,2,3]")
+        XCTAssertEqual(LupedWatchDiagnostics.logDecode(json: "not json"), "not json")
+    }
+}

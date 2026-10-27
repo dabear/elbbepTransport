@@ -285,7 +285,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         }
         let hex = PebbleTransport.hex(message.dropFirst(18))
         if let diagnostics = tuples[LupedMessageKey.diagnostics]?.string {
-            record(.fromWatch, "Watch diagnostics: \(diagnostics)")
+            record(.fromWatch, "Watch diagnostics\n" + LupedWatchDiagnostics.logDecode(json: diagnostics))
             status.diagnostics = LupedWatchDiagnostics(json: diagnostics)
             status.watchInfoNote = nil
             diagnosticsReplyTimeout?.cancel()
@@ -581,6 +581,74 @@ public struct LupedWatchDiagnostics {
         staleTransitions = int(31)
         phoneDisconnects = int(34)
         phoneDisconnectedSeconds = int(35).map { $0 / 1_000 }
+    }
+}
+
+extension LupedWatchDiagnostics {
+    /// What each `DIAGNOSTICS` field means, in the order the watchface's
+    /// `diagnosticsSnapshot()` builds it (format version 2), for the communication log.
+    static let fieldDescriptions = [
+        "format version",
+        "watch clock (ms since Unix epoch)",
+        "battery (%)",
+        "counting since (ms since Unix epoch)",
+        "watchface start ID",
+        "full redraws",
+        "full redraw time, total (ms)",
+        "slowest full redraw (ms)",
+        "minute redraws",
+        "minute redraw time, total (ms)",
+        "slowest minute redraw (ms)",
+        "render failures",
+        "render retries",
+        "DATA messages received",
+        "refresh requests sent",
+        "refresh requests deferred",
+        "urgent-low alarms (on-watch thresholds, CrimsonBear only)",
+        "low alarms (on-watch thresholds, CrimsonBear only)",
+        "high alarms (on-watch thresholds, CrimsonBear only)",
+        "messages received",
+        "bytes received",
+        "messages sent",
+        "bytes sent",
+        "refresh responses",
+        "refresh response time, total (ms)",
+        "slowest refresh response (ms)",
+        "pixels redrawn",
+        "late minute events",
+        "minute event lateness, total (ms)",
+        "worst minute event lateness (ms)",
+        "refresh responses by latency (≤250, ≤500, ≤1000, ≤2000, ≤5000, ≤10000, ≤20000 ms, slower)",
+        "stale transitions (latest reading turned 15 min old)",
+        "no-data buzzes",
+        "oldest reading age while stale (ms)",
+        "phone disconnects",
+        "phone disconnected time, total (ms)",
+        "longest phone disconnect (ms)",
+        "phone disconnected now (1 = yes)",
+    ]
+
+    /// The raw `DIAGNOSTICS` JSON decoded one field per line, like the `DATA`
+    /// decode. Falls back to the raw text when it isn't a version-2 array.
+    static func logDecode(json: String) -> String {
+        guard let data = json.data(using: .utf8),
+              let values = try? JSONSerialization.jsonObject(with: data) as? [Any],
+              (values.first as? NSNumber)?.intValue == 2
+        else {
+            return json
+        }
+        let fields: [(value: Any, description: String)] = values.enumerated().map { index, value in
+            let shown: Any
+            if let number = value as? NSNumber {
+                shown = number.int64Value
+            } else if let list = value as? [Any] {
+                shown = "[" + list.map { ($0 as? NSNumber)?.stringValue ?? "\($0)" }.joined(separator: ", ") + "]"
+            } else {
+                shown = "\(value)"
+            }
+            return (shown, index < fieldDescriptions.count ? fieldDescriptions[index] : "unknown")
+        }
+        return LupedPayload.decodeTable(fields)
     }
 }
 

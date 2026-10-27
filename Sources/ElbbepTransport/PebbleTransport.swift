@@ -189,6 +189,19 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         bytes.map { String(format: "%02x", $0) }.joined(separator: " ")
     }
 
+    /// Core Bluetooth's name for a manager state, for the log ("poweredOn").
+    nonisolated static func name(of state: CBManagerState) -> String {
+        switch state {
+        case .unknown: return "unknown"
+        case .resetting: return "resetting"
+        case .unsupported: return "unsupported"
+        case .unauthorized: return "unauthorized"
+        case .poweredOff: return "poweredOff"
+        case .poweredOn: return "poweredOn"
+        @unknown default: return "unrecognized"
+        }
+    }
+
     private func record(_ kind: PebbleLogKind, _ message: String) {
         delegate?.pebbleTransport(self, log: kind, message)
     }
@@ -317,7 +330,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
     }
 
     public func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
-        record(.info, String(format: "Bluetooth peripheral state %ld", peripheral.state.rawValue))
+        record(.info, "Bluetooth peripheral state \(Self.name(of: peripheral.state)) (\(peripheral.state.rawValue))")
         defer { updateLink() }
         switch peripheral.state {
         case .poweredOn:
@@ -420,7 +433,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
                 sendPacket(type: PPoGATT.typeAck, sequence: lastSentAck)
             }
         default:
-            record(.error, String(format: "Ignoring PPoGATT packet type %d", type))
+            record(.error, String(format: "Ignoring unknown PPoGATT packet type %d", type))
         }
     }
 

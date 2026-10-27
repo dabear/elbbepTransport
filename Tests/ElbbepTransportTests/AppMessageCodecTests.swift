@@ -1,4 +1,5 @@
 import XCTest
+import CoreBluetooth
 @testable import ElbbepTransport
 
 final class AppMessageCodecTests: XCTestCase {
@@ -53,6 +54,13 @@ final class AppMessageCodecTests: XCTestCase {
 
     func testHex() {
         XCTAssertEqual(PebbleTransport.hex([0x00, 0xFF, 0x1A]), "00 ff 1a")
+    }
+
+    // The log names Core Bluetooth states; the raw value goes in parentheses.
+    func testBluetoothStateNames() {
+        XCTAssertEqual(PebbleTransport.name(of: .poweredOn), "poweredOn")
+        XCTAssertEqual(PebbleTransport.name(of: .poweredOff), "poweredOff")
+        XCTAssertEqual(PebbleTransport.name(of: .unauthorized), "unauthorized")
     }
 
     @MainActor
