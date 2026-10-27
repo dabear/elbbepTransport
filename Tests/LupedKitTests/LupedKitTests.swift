@@ -179,3 +179,16 @@ final class LupedWatchDiagnosticsLogTests: XCTestCase {
         XCTAssertEqual(LupedWatchDiagnostics.logDecode(json: "not json"), "not json")
     }
 }
+
+final class LupedWatchDiagnosticsRestoreTests: XCTestCase {
+    // A report saved on an earlier launch keeps its original arrival time, so the
+    // settings screen shows how old it is.
+    func testRestoredReportKeepsItsArrivalTime() throws {
+        let json = "[2,1792957000000,85,1792950000000,1,0,0,0,0,0,0,0,0,12,3]"
+        let receivedAt = Date(timeIntervalSince1970: 1_792_957_000)
+        let report = try XCTUnwrap(LupedWatchDiagnostics(json: json, receivedAt: receivedAt))
+        XCTAssertEqual(report.receivedAt, receivedAt)
+        XCTAssertEqual(report.battery, 85)
+        XCTAssertEqual(report.readingsReceived, 12)
+    }
+}

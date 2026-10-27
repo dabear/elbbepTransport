@@ -89,6 +89,10 @@ public final class LupedTransport: PebbleTransportDelegate {
     public let status = LupedLinkStatus()
     /// Mirrors every communication-log line to the host's diagnostic log.
     public var diagnosticLog: ((LupedCommunicationLog.Kind, String) -> Void)?
+    /// Called with each watch diagnostics report (raw JSON, arrival time) so the
+    /// host can keep the latest across launches and hand it to `restoreDiagnostics`.
+    /// The watchface reports about once an hour on its own.
+    public var diagnosticsDidArrive: ((String, Date) -> Void)?
     /// Supplies the current readings and alert state. Returns `nil` while the
     /// host is not ready; throwing logs the error.
     public var snapshotProvider: (() async throws -> LupedSnapshot?)?
@@ -286,7 +290,9 @@ public final class LupedTransport: PebbleTransportDelegate {
         let hex = PebbleTransport.hex(message.dropFirst(18))
         if let diagnostics = tuples[LupedMessageKey.diagnostics]?.string {
             record(.fromWatch, "Watch diagnostics\n" + LupedWatchDiagnostics.logDecode(json: diagnostics))
-            status.diagnostics = LupedWatchDiagnostics(json: diagnostics)
+            let receivedAt = Date()
+            status.diagnostics = LupedWatchDiagnostics(json: diagnostics, receivedAt: receivedAt)
+            diagnosticsDidArrive?(diagnostics, receivedAt)
             status.watchInfoNote = nil
             diagnosticsReplyTimeout?.cancel()
         }
@@ -395,6 +401,27 @@ public final class LupedTransport: PebbleTransportDelegate {
             restartWatchface()
         }
         sendPendingCommand()
+    }
+
+    /// Asks for fresh diagnostics only when the watch can answer right away: it has
+    /// messaged the phone this session, so its outbox is open. Never restarts the
+    /// watchface, so a settings screen can call it whenever it appears.
+    public func requestDiagnosticsIfReachable() {
+        guard transport.isSessionOpen, heardFromWatchThisSession, !diagnosticsRequested,
+              awaitingWatchfaceRestart == nil, inflightCommand == nil
+        else {
+            return
+        }
+        record(.info, "Watch info requested (settings opened)")
+        diagnosticsRequested = true
+        sendPendingCommand()
+    }
+
+    /// Shows a diagnostics report the host saved from an earlier launch until the
+    /// watch sends a newer one. Pair with `diagnosticsDidArrive`.
+    public func restoreDiagnostics(json: String, receivedAt: Date) {
+        guard status.diagnostics == nil else { return }
+        status.diagnostics = LupedWatchDiagnostics(json: json, receivedAt: receivedAt)
     }
 
     /// Stops and relaunches the watchface. On start, Alloy's ready handshake
@@ -558,7 +585,7 @@ public struct LupedWatchDiagnostics {
     public let phoneDisconnects: Int?
     public let phoneDisconnectedSeconds: Int?
 
-    public init?(json: String) {
+    public init?(json: String, receivedAt: Date = Date()) {
         guard let data = json.data(using: .utf8),
               let values = try? JSONSerialization.jsonObject(with: data) as? [Any],
               (values.first as? NSNumber)?.intValue == 2
@@ -568,7 +595,7 @@ public struct LupedWatchDiagnostics {
         func int(_ index: Int) -> Int? {
             index < values.count ? (values[index] as? NSNumber)?.intValue : nil
         }
-        receivedAt = Date()
+        self.receivedAt = receivedAt
         battery = int(2)
         countingSince = int(3).map { Date(timeIntervalSince1970: TimeInterval($0) / 1_000) }
         readingsReceived = int(13)
