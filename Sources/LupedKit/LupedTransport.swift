@@ -42,13 +42,19 @@ public struct LupedSnapshot {
     /// Why the level is what it is, for the communication log only: the active
     /// alerts behind a non-zero level, or why it is 0. Not sent to the watch.
     public var hostAlertReason: String?
+    /// Changes each time the host fires a glucose alert, including repeats of an
+    /// alert that is still active, so the watch buzzes in step with the host.
+    /// Persist it across launches so a restart can't land on the value the watch
+    /// last saw; any value works as long as it changes on every fire.
+    public var alertEvent: Int
 
-    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertLevel: Int = 0, hostAlertReason: String? = nil) {
+    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0) {
         self.readings = readings
         self.storedSampleCount = storedSampleCount
         self.unit = unit
         self.hostAlertLevel = hostAlertLevel
         self.hostAlertReason = hostAlertReason
+        self.alertEvent = alertEvent
     }
 }
 
@@ -176,7 +182,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             alarmStatus = status
             record(.info, status)
         }
-        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel, hostAlertReason: snapshot.hostAlertReason) else {
+        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent) else {
             record(.info, String(format: "No usable CGM readings among %ld stored samples; nothing to send", snapshot.storedSampleCount))
             return
         }

@@ -65,7 +65,10 @@ public struct LupedPayload: Equatable {
         watchAlarmsEnabled ? "Watch alarms on" : "Watch alarms off: Watch Alarms is turned off"
     }
 
-    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertLevel: Int = 0, hostAlertReason: String? = nil) {
+    /// `alertEvent` changes each time the host fires a glucose alert (the first
+    /// fire and every repeat), so the watch can buzz on a repeat even though the
+    /// alert level stays the same.
+    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0) {
         let readings = readings
             .sorted { $0.date < $1.date }
             .suffix(12)
@@ -100,6 +103,7 @@ public struct LupedPayload: Equatable {
             (timestamp, "timestamp (milliseconds since Unix epoch)"),
             (fullScreen ? 1 : 0, fullScreen ? "full-screen ring" : "ring with graph"),
             (hostAlertLevel, "host-issued alert level: \(Self.alertLevelNames[hostAlertLevel] ?? "unknown")" + (hostAlertReason.map { " (\($0))" } ?? "")),
+            (alertEvent, "alert event (changes each time the host fires an alert)"),
         ]
         let message = fields.map(\.value)
 

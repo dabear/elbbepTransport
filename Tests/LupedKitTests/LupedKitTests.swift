@@ -18,9 +18,9 @@ final class LupedPayloadTests: XCTestCase {
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, fullScreen: false))
         let timestamp = Int64(start.addingTimeInterval(300).timeIntervalSince1970 * 1_000)
         // Minimal Luped protocol: [version, glucose, delta, trend, history,
-        // unitsFlag, timestamp, fullScreen, hostAlertLevel]. No thresholds travel;
-        // the trailing 0 is the host-issued alert level.
-        XCTAssertEqual(payload.data, "[1,110,10,4,[100,110],0,\(timestamp),0,0]")
+        // unitsFlag, timestamp, fullScreen, hostAlertLevel, alertEvent]. No
+        // thresholds travel; the trailing zeros are the alert level and event.
+        XCTAssertEqual(payload.data, "[1,110,10,4,[100,110],0,\(timestamp),0,0,0]")
         XCTAssertEqual(payload.readingCount, 2)
     }
 
@@ -29,7 +29,7 @@ final class LupedPayloadTests: XCTestCase {
     func testFullScreenSendsNoHistory() throws {
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, fullScreen: true))
         let timestamp = Int64(start.addingTimeInterval(300).timeIntervalSince1970 * 1_000)
-        XCTAssertEqual(payload.data, "[1,110,10,4,[],0,\(timestamp),1,0]")
+        XCTAssertEqual(payload.data, "[1,110,10,4,[],0,\(timestamp),1,0,0]")
         XCTAssertEqual(payload.readingCount, 0)
     }
 
@@ -38,13 +38,23 @@ final class LupedPayloadTests: XCTestCase {
         let plain = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 0))
         let annotated = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 0, hostAlertReason: "no active alerts from Loop"))
         XCTAssertEqual(annotated.data, plain.data)
-        let last = try XCTUnwrap(annotated.logDetails.components(separatedBy: "\n").dropLast().last)
-        XCTAssertTrue(last.hasSuffix("host-issued alert level: none (no active alerts from Loop)"), last)
+        let levelLine = try XCTUnwrap(annotated.logDetails.components(separatedBy: "\n").first { $0.contains("host-issued alert level") })
+        XCTAssertTrue(levelLine.hasSuffix("host-issued alert level: none (no active alerts from Loop)"), levelLine)
     }
 
-    func testHostAlertLevelIsLastField() throws {
-        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 2))
-        XCTAssertTrue(payload.data.hasSuffix(",2]"), payload.data)
+    // The host alert level (index 8) is followed by the alert event (index 9).
+    func testAlertLevelAndEventAreTheLastFields() throws {
+        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 2, alertEvent: 417))
+        XCTAssertTrue(payload.data.hasSuffix(",2,417]"), payload.data)
+    }
+
+    // A repeat of an active alert keeps the level but changes the event, so the
+    // DATA differs and is sent (not skipped as already delivered).
+    func testRepeatFireChangesData() throws {
+        let first = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 3, alertEvent: 7))
+        let repeated = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 3, alertEvent: 8))
+        XCTAssertNotEqual(first.data, repeated.data)
+        XCTAssertNil(LupedDelivery.unchangedData(repeated.data, delivered: first.data, inFlight: nil))
     }
 
     func testLogSummaryAndDecodedDetails() throws {
@@ -68,6 +78,7 @@ final class LupedPayloadTests: XCTestCase {
             "6: \(timestamp) timestamp (milliseconds since Unix epoch)",
             "7: 1 full-screen ring",
             "8: 0 host-issued alert level: none",
+            "9: 0 alert event (changes each time the host fires an alert)",
         ])
     }
 
