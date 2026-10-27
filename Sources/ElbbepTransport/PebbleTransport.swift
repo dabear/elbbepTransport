@@ -172,6 +172,14 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
     private var inboundFrames = Data()
     private var nextTransactionID: UInt8 = 0
 
+    /// Explains a link that keeps waiting for the watch (see `PebbleWatchProbe`).
+    private let watchProbe = PebbleWatchProbe()
+    private var waitCheck: Task<Void, Never>?
+    private var lastWaitDiagnosis: String?
+    /// How long without a watch session before the first check, and between checks.
+    static let waitCheckDelay: TimeInterval = 90
+    static let waitCheckInterval: TimeInterval = 300
+
     public init(isEnabled: Bool, appUUID: UUID) {
         self.isEnabled = isEnabled
         self.appUUID = appUUID
@@ -245,6 +253,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         closeSession(reason: "settings changed")
         watch = nil
         peripheralManager?.removeAllServices()
+        cancelWaitCheck()
         isServicePublished = false
         dataCharacteristic = nil
 
@@ -344,6 +353,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
             dataCharacteristic = nil
             closeSession(reason: "Bluetooth unavailable")
             watch = nil
+            cancelWaitCheck()
         default:
             break
         }
@@ -357,6 +367,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
             return
         }
         record(.info, "Published PPoGATT service; waiting for the watch to discover it")
+        scheduleWaitCheck()
     }
 
     public func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
@@ -366,6 +377,8 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         record(.fromWatch, String(format: "Watch %@ subscribed (max notification %ld bytes); awaiting reset request", central.identifier.uuidString, central.maximumUpdateValueLength))
         closeSession(reason: "watch subscribed again")
         watch = central
+        cancelWaitCheck()
+        lastWaitDiagnosis = nil
     }
 
     public func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom characteristic: CBCharacteristic) {
@@ -375,6 +388,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         record(.fromWatch, String(format: "Watch %@ unsubscribed or disconnected", central.identifier.uuidString))
         closeSession(reason: "watch unsubscribed")
         watch = nil
+        scheduleWaitCheck()
     }
 
     public func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
@@ -552,6 +566,43 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         packetAckTimeout?.cancel()
         packetAckTimeout = nil
         inboundFrames.removeAll()
+    }
+
+    // MARK: - Waiting for the watch
+
+    /// Checks back while the service is published but no watch has subscribed,
+    /// and logs why when the reason changes.
+    private func scheduleWaitCheck() {
+        cancelWaitCheck()
+        watchProbe.prepare()
+        let started = Date()
+        waitCheck = Task { [weak self] in
+            var delay = Self.waitCheckDelay
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard !Task.isCancelled, let self, self.isEnabled, self.isServicePublished, self.watch == nil else {
+                    return
+                }
+                delay = Self.waitCheckInterval
+                guard let result = self.watchProbe.check() else {
+                    continue
+                }
+                let minutes = Int(Date().timeIntervalSince(started) / 60)
+                let diagnosis = PebbleWatchProbe.diagnosis(result, minutes: max(minutes, 1))
+                // Compare without the minutes so a still-waiting link isn't logged again.
+                let key = PebbleWatchProbe.diagnosis(result, minutes: 0)
+                guard key != self.lastWaitDiagnosis else {
+                    continue
+                }
+                self.lastWaitDiagnosis = key
+                self.record(result.pebbleConnected ? .error : .info, diagnosis)
+            }
+        }
+    }
+
+    private func cancelWaitCheck() {
+        waitCheck?.cancel()
+        waitCheck = nil
     }
 
     private func closeSession(reason: String) {
