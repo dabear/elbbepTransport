@@ -145,7 +145,9 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
 
     private var peripheralManager: CBPeripheralManager?
     private var dataCharacteristic: CBMutableCharacteristic?
-    private var isServicePublished = false
+    /// The one service this transport published; only this one is ever removed.
+    private var publishedService: CBMutableService?
+    private var isServicePublished: Bool { publishedService != nil }
 
     private enum SessionState {
         case closed
@@ -252,9 +254,11 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
 
         closeSession(reason: "settings changed")
         watch = nil
-        peripheralManager?.removeAllServices()
+        if let publishedService {
+            peripheralManager?.remove(publishedService)
+        }
         cancelWaitCheck()
-        isServicePublished = false
+        publishedService = nil
         dataCharacteristic = nil
 
         guard isEnabled else {
@@ -338,7 +342,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         service.characteristics = [metaCharacteristic, dataCharacteristic]
 
         self.dataCharacteristic = dataCharacteristic
-        isServicePublished = true
+        publishedService = service
         manager.add(service)
     }
 
@@ -350,7 +354,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
             publishService(on: peripheral)
         case .poweredOff, .resetting, .unauthorized, .unsupported:
             // iOS drops published services in these states; publish again on power-on.
-            isServicePublished = false
+            publishedService = nil
             dataCharacteristic = nil
             closeSession(reason: "Bluetooth unavailable")
             watch = nil
@@ -363,7 +367,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
     public func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
         if let error {
             record(.error, String(format: "Unable to publish PPoGATT service: %@", String(describing: error)))
-            isServicePublished = false
+            publishedService = nil
             dataCharacteristic = nil
             return
         }
