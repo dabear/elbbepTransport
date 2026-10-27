@@ -173,6 +173,17 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
     private var packetAckTimeout: Task<Void, Never>?
     private var inboundFrames = Data()
     private var nextTransactionID: UInt8 = 0
+    /// Devices whose writes were refused, so each is logged once per watch session.
+    private var refusedCentrals = Set<UUID>()
+
+    /// The largest Pebble Protocol payload accepted from the watch: the 8 KiB
+    /// AppMessage size announced in the phone-version reply, plus room for the
+    /// AppMessage header. A larger length means a garbled frame.
+    static let maxInboundPayload = 8 * 1024 + 64
+
+    nonisolated static func acceptsInboundPayload(length: Int) -> Bool {
+        length <= maxInboundPayload
+    }
 
     /// Explains a link that keeps waiting for the watch (see `PebbleWatchProbe`).
     private let watchProbe = PebbleWatchProbe()
@@ -382,6 +393,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         record(.fromWatch, String(format: "Watch %@ subscribed (max notification %ld bytes); awaiting reset request", central.identifier.uuidString, central.maximumUpdateValueLength))
         closeSession(reason: "watch subscribed again")
         watch = central
+        refusedCentrals.removeAll()
         cancelWaitCheck()
         lastWaitDiagnosis = nil
     }
@@ -400,6 +412,15 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         for request in requests {
             guard request.characteristic.uuid == PPoGATT.data else {
                 peripheral.respond(to: request, withResult: .requestNotSupported)
+                continue
+            }
+            // Only the watch that subscribed may drive the session; any other
+            // bonded device is turned away.
+            if let watch, request.central.identifier != watch.identifier {
+                if refusedCentrals.insert(request.central.identifier).inserted {
+                    record(.error, String(format: "Refused a write from %@: it is not the subscribed watch %@", request.central.identifier.uuidString, watch.identifier.uuidString))
+                }
+                peripheral.respond(to: request, withResult: .insufficientAuthorization)
                 continue
             }
             if watch == nil {
@@ -525,9 +546,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         retransmissions += 1
         guard retransmissions <= PPoGATT.maxRetransmissions else {
             record(.error, "Watch stopped acknowledging data; resetting PPoGATT session")
-            resetSessionState()
-            sessionState = .resetting(selfInitiated: true)
-            sendPacket(type: PPoGATT.typeResetRequest, sequence: 0, payload: [PPoGATT.version])
+            requestSessionReset()
             return
         }
         record(.toWatch, String(format: "Retransmitting %ld unacknowledged packet(s)", inflightPackets.count))
@@ -557,6 +576,13 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
             }
             pendingNotifications.removeFirst()
         }
+    }
+
+    /// Starts a reset handshake from our side.
+    private func requestSessionReset() {
+        resetSessionState()
+        sessionState = .resetting(selfInitiated: true)
+        sendPacket(type: PPoGATT.typeResetRequest, sequence: 0, payload: [PPoGATT.version])
     }
 
     private func resetSessionState() {
@@ -627,6 +653,11 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
             let header = [UInt8](inboundFrames.prefix(4))
             let length = Int(header[0]) << 8 | Int(header[1])
             let endpoint = UInt16(header[2]) << 8 | UInt16(header[3])
+            guard Self.acceptsInboundPayload(length: length) else {
+                record(.error, String(format: "Watch sent a %ld-byte frame, more than the %ld bytes accepted; resetting PPoGATT session", length, Self.maxInboundPayload))
+                requestSessionReset()
+                return
+            }
             guard inboundFrames.count >= 4 + length else {
                 return
             }

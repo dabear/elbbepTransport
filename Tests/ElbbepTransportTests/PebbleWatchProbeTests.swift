@@ -29,3 +29,16 @@ final class PebbleWatchProbeTests: XCTestCase {
         XCTAssertEqual(PebbleWatchProbe.diagnosis(result, minutes: 0), PebbleWatchProbe.diagnosis(result, minutes: 0))
     }
 }
+
+/// The largest frame accepted from the watch follows the announced 8 KiB AppMessage size.
+final class InboundFrameLimitTests: XCTestCase {
+    func testAcceptsAnnouncedAppMessageSize() {
+        XCTAssertTrue(PebbleTransport.acceptsInboundPayload(length: 8 * 1024))
+        XCTAssertTrue(PebbleTransport.acceptsInboundPayload(length: PebbleTransport.maxInboundPayload))
+    }
+
+    func testRejectsLargerFrames() {
+        XCTAssertFalse(PebbleTransport.acceptsInboundPayload(length: PebbleTransport.maxInboundPayload + 1))
+        XCTAssertFalse(PebbleTransport.acceptsInboundPayload(length: 0xFFFF))
+    }
+}
