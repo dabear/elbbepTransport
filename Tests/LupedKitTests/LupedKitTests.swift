@@ -100,6 +100,14 @@ final class LupedPayloadTests: XCTestCase {
         XCTAssertTrue(payload.data.hasPrefix("[1,6.8,0,3,[6.8],1,"), payload.data)
     }
 
+    // The wire sends 7 for 7.0 mmol/L, but the log headline shows it the way the phone does.
+    func testLogSummaryKeepsMillimolesDecimal() throws {
+        let payload = try XCTUnwrap(LupedPayload(readings: readings([129.7, 126.1]), unit: .millimolesPerLiter, fullScreen: false))
+        XCTAssertTrue(payload.data.hasPrefix("[1,7,-0.2,"), payload.data)
+        XCTAssertTrue(payload.logSummary.hasPrefix("7.0 mmol/L "), payload.logSummary)
+        XCTAssertTrue(payload.logSummary.contains(" -0.2 at "), payload.logSummary)
+    }
+
     func testTrendFallsBackToRate() throws {
         // +30 mg/dL in 5 minutes is 6 mg/dL/min: DoubleUp.
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 130]), unit: .milligramsPerDeciliter, fullScreen: false))

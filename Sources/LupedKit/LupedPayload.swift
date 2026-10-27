@@ -120,8 +120,10 @@ public struct LupedPayload: Equatable {
 
         let time = DateFormatter.localizedString(from: latest.date, dateStyle: .none, timeStyle: .medium)
         let roundedDelta = Self.rounded(delta, for: unit)
-        let deltaText = (roundedDelta.doubleValue > 0 ? "+" : "") + roundedDelta.stringValue
-        self.logSummary = "\(values[values.count - 1].stringValue) \(unitName) \(Self.trendArrows[direction]) \(deltaText) at \(time)"
+        // The headline reads like the phone shows glucose (7.0 mmol/L, not the wire's 7).
+        let digits = unit == .millimolesPerLiter ? "%.1f" : "%.0f"
+        let deltaText = (roundedDelta.doubleValue > 0 ? "+" : "") + String(format: digits, roundedDelta.doubleValue)
+        self.logSummary = "\(String(format: digits, values[values.count - 1].doubleValue)) \(unitName) \(Self.trendArrows[direction]) \(deltaText) at \(time)"
         self.logDetails = Self.decodeTable(fields)
     }
 
