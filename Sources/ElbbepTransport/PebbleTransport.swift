@@ -309,17 +309,20 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         meta.append(appUUID.bytes)
         meta.append(0) // Session type inferred from the app UUID: an app session.
 
+        // Encryption required: the watch bonds with LE Secure Connections and only
+        // opens PPoGATT once the link is encrypted, so this costs a bonded watch
+        // nothing and turns away unencrypted peers.
         let metaCharacteristic = CBMutableCharacteristic(
             type: PPoGATT.meta,
             properties: .read,
             value: meta,
-            permissions: .readable
+            permissions: .readEncryptionRequired
         )
         let dataCharacteristic = CBMutableCharacteristic(
             type: PPoGATT.data,
             properties: [.writeWithoutResponse, .notify],
             value: nil,
-            permissions: .writeable
+            permissions: .writeEncryptionRequired
         )
         let service = CBMutableService(type: PPoGATT.service, primary: true)
         service.characteristics = [metaCharacteristic, dataCharacteristic]
