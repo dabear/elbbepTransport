@@ -260,6 +260,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         guard isEnabled else {
             peripheralManager?.delegate = nil
             peripheralManager = nil
+            watchProbe.release()
             updateLink()
             return
         }

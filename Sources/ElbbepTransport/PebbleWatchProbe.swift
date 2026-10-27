@@ -24,16 +24,25 @@ final class PebbleWatchProbe: NSObject, @preconcurrency CBCentralManagerDelegate
         var offersReversed: Bool
     }
 
-    private lazy var central = CBCentralManager(delegate: self, queue: .main, options: [CBCentralManagerOptionShowPowerAlertKey: false])
+    private var central: CBCentralManager?
 
     /// Creates the central early, since it can only answer once powered on.
     func prepare() {
-        _ = central
+        guard central == nil else {
+            return
+        }
+        central = CBCentralManager(delegate: self, queue: .main, options: [CBCentralManagerOptionShowPowerAlertKey: false])
+    }
+
+    /// Lets go of Bluetooth when the link is switched off or deleted.
+    func release() {
+        central?.delegate = nil
+        central = nil
     }
 
     /// `nil` while Bluetooth can't answer yet.
     func check() -> Result? {
-        guard central.state == .poweredOn else {
+        guard let central, central.state == .poweredOn else {
             return nil
         }
         let reversed = central.retrieveConnectedPeripherals(withServices: Self.reversedServices)
