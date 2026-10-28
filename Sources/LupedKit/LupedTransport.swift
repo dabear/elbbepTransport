@@ -178,12 +178,6 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// Outcomes of the watch's requests waiting to go back to it (`RESULT`), oldest first.
     private var pendingResults: [String] = []
     private var diagnosticsReplyTimeout: Task<Void, Never>?
-    /// Whether Luped has messaged the phone since this session opened. Alloy
-    /// disables a watchface's outbox whenever a non-system session (like this
-    /// one) opens or closes; only a watchface restart re-enables it.
-    private var heardFromWatchThisSession = false
-    /// Waiting for Luped to start again after the phone restarted it.
-    private var awaitingWatchfaceRestart: Task<Void, Never>?
     private var pushAckTimeout: Task<Void, Never>?
     private var retryDelay: TimeInterval = 0
     /// Set after the full retry backoff got no ACK: pushes stop until the
@@ -346,18 +340,9 @@ public final class LupedTransport: PebbleTransportDelegate {
         paused = false
         status.retryAt = nil
         inflightCommand = nil
-        heardFromWatchThisSession = false
-        awaitingWatchfaceRestart?.cancel()
-        awaitingWatchfaceRestart = nil
     }
 
     public func pebbleTransport(_ transport: PebbleTransport, didReceive tuples: [UInt32: AppMessageTuple], message: [UInt8]) {
-        heardFromWatchThisSession = true
-        if awaitingWatchfaceRestart != nil {
-            awaitingWatchfaceRestart?.cancel()
-            awaitingWatchfaceRestart = nil
-            record(.info, "Watchface restarted; it can reply again")
-        }
         if tuples[PebbleAppMessage.alloyReadyKey] != nil {
             dropMessagesToPreviousWatchface()
         }
@@ -451,17 +436,17 @@ public final class LupedTransport: PebbleTransportDelegate {
 
     // MARK: - Commands
 
-    /// The Pebble SDK's Alloy runtime disables a watchface's outbox whenever a
-    /// non-system session (like this one) opens or closes, until the watchface
-    /// restarts. The watch still acknowledges the request but cannot answer.
+    /// Alloy turns a watchface's writes off whenever a non-system session (like
+    /// this one) opens or closes. Luped (0.1.9+) then reopens its message channel
+    /// and sends what is pending, at most once every 30 s, so a reply can take up
+    /// to that long after a session change.
     private func awaitDiagnosticsReply() {
         diagnosticsReplyTimeout?.cancel()
         diagnosticsReplyTimeout = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            try? await Task.sleep(nanoseconds: 35_000_000_000)
             guard !Task.isCancelled, let self else { return }
-            self.heardFromWatchThisSession = false
-            self.record(.error, "No diagnostics reply within 5 s; the next request restarts the watchface first")
-            self.status.watchInfoNote = NSLocalizedString("The watch did not reply. Tap Refresh Watch Info again to restart the watchface and retry.", bundle: .lupedKit, comment: "Pebble watch info note: no reply")
+            self.record(.error, "No diagnostics reply within 35 s")
+            self.status.watchInfoNote = NSLocalizedString("The watch did not reply. Check that Luped CGM is the active watchface, then try again.", bundle: .lupedKit, comment: "Pebble watch info note: no reply")
         }
     }
 
@@ -484,9 +469,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         }
     }
 
-    /// Asks Luped for its diagnostics snapshot (battery and counters). If Luped
-    /// has not messaged the phone since this session opened, its outbox is disabled,
-    /// so the phone first restarts the watchface over the app run-state endpoint.
+    /// Asks Luped for its diagnostics snapshot (battery and counters).
     public func requestDiagnostics() {
         record(.info, "Watch info requested")
         status.watchInfoNote = nil
@@ -495,9 +478,6 @@ public final class LupedTransport: PebbleTransportDelegate {
             return
         }
         diagnosticsRequested = true
-        if !heardFromWatchThisSession, awaitingWatchfaceRestart == nil {
-            restartWatchface()
-        }
         sendPendingCommand()
     }
 
@@ -506,26 +486,6 @@ public final class LupedTransport: PebbleTransportDelegate {
     public func restoreDiagnostics(json: String, receivedAt: Date) {
         guard status.diagnostics == nil else { return }
         status.diagnostics = LupedWatchDiagnostics(json: json, receivedAt: receivedAt)
-    }
-
-    /// Stops and relaunches the watchface. On start, Alloy's ready handshake
-    /// reaches the phone and its reply re-enables the watchface's outbox.
-    private func restartWatchface() {
-        status.watchInfoNote = NSLocalizedString("Restarting the watchface so it can reply…", bundle: .lupedKit, comment: "Pebble watch info note: restarting the watchface")
-        record(.toWatch, "App run state STOP for \(transport.appUUID.uuidString) (restart so the watchface can reply)")
-        transport.sendAppRunState(run: false)
-        awaitingWatchfaceRestart = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            guard !Task.isCancelled, let self else { return }
-            self.record(.toWatch, "App run state RUN for \(self.transport.appUUID.uuidString)")
-            self.transport.sendAppRunState(run: true)
-            try? await Task.sleep(nanoseconds: 15_000_000_000)
-            guard !Task.isCancelled else { return }
-            self.awaitingWatchfaceRestart = nil
-            self.diagnosticsRequested = false
-            self.record(.error, "The watchface did not start within 15 s")
-            self.status.watchInfoNote = NSLocalizedString("The watchface did not restart. Open it on the watch, then try again.", bundle: .lupedKit, comment: "Pebble watch info note: restart failed")
-        }
     }
 
     /// Only a freshly started watchface sends the ready handshake, so anything
@@ -562,7 +522,7 @@ public final class LupedTransport: PebbleTransportDelegate {
     }
 
     private func sendPendingCommand() {
-        guard diagnosticsRequested || !pendingResults.isEmpty, awaitingWatchfaceRestart == nil, inflightPush == nil, inflightCommand == nil, transport.isSessionOpen else {
+        guard diagnosticsRequested || !pendingResults.isEmpty, inflightPush == nil, inflightCommand == nil, transport.isSessionOpen else {
             return
         }
         let transactionID = transport.makeTransactionID()
