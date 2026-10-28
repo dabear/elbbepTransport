@@ -744,6 +744,7 @@ extension LupedWatchDiagnostics {
         "phone disconnected now (1 = yes)",
         "system pop-ups over the watchface (notifications, alarms, calls)",
         "recent host-alert buzzes (listed below)",
+        "alert events while Watch Alarms was off (not buzzed)",
     ]
 
     /// Index of Luped's recent host-alert buzzes: up to 5 of
@@ -823,6 +824,8 @@ extension LupedWatchDiagnostics {
         let level = LupedPayload.alertLevelNames[buzz[1].intValue] ?? "level \(buzz[1])"
         let outcome: String
         switch buzz[3].intValue {
+        case -2:
+            outcome = "the watchface's buzz call failed with an error, so it did not buzz"
         case ..<0:
             outcome = "nothing covered the watchface during the buzz"
         case 0:
