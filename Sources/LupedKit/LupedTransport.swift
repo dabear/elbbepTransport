@@ -100,9 +100,10 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// `mute:<minutes>`), with the requested duration. The host decides whether
     /// its user allowed muting from the watch.
     public var alertMuteRequested: ((TimeInterval) -> Void)?
-    /// Called when the watch asks for a bolus (`COMMAND bolus`). The watch sends
-    /// no amount; the host decides it and runs its own checks.
-    public var bolusRequested: (() -> Void)?
+    /// Called when the watch asks for a bolus (`COMMAND bolus`, or
+    /// `forcedbolus` to skip only the host's recommendation check). The watch
+    /// sends no amount; the host decides it and runs its own checks.
+    public var bolusRequested: ((_ forced: Bool) -> Void)?
 
     /// Last logged alarm state, so the log records each change once.
     private var alarmStatus: String?
@@ -317,9 +318,9 @@ public final class LupedTransport: PebbleTransportDelegate {
         if let command, command.hasPrefix("mute:"), let minutes = Int(command.dropFirst(5)), minutes > 0 {
             record(.fromWatch, "Watch asked to mute \(hostName) alerts for \(minutes) min (COMMAND \(command))")
             alertMuteRequested?(TimeInterval(minutes * 60))
-        } else if command == "bolus" {
-            record(.fromWatch, "Watch asked for a bolus (COMMAND bolus)")
-            bolusRequested?()
+        } else if let command, command == "bolus" || command == "forcedbolus" {
+            record(.fromWatch, "Watch asked for a \(command == "forcedbolus" ? "forced bolus" : "bolus") (COMMAND \(command))")
+            bolusRequested?(command == "forcedbolus")
         } else if tuples[PebbleAppMessage.alloyReadyKey] != nil || command == "refresh" {
             record(.fromWatch, "Watchface requested refresh (\(command.map { "COMMAND \($0)" } ?? "ready handshake"))\n" + LupedPayload.alignedRows([("tuples", hex)]))
             sendIfNeeded(force: true)
