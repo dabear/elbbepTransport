@@ -8,6 +8,7 @@ private enum LupedMessageKey {
     static let data: UInt32 = 10_001
     static let configured: UInt32 = 10_003
     static let diagnostics: UInt32 = 10_004
+    static let result: UInt32 = 10_005
 }
 
 /// Luped's delivery policy for readings.
@@ -100,6 +101,9 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// `mute:<minutes>`), with the requested duration. The host decides whether
     /// its user allowed muting from the watch.
     public var alertMuteRequested: ((TimeInterval) -> Void)?
+    /// Called when the watch asks to add carbs (`COMMAND carbs`). The watch sends
+    /// no amount; the host decides it and runs its own checks.
+    public var carbsRequested: (() -> Void)?
     /// Called when the watch asks for a bolus (`COMMAND bolus`, or
     /// `forcedbolus` to skip only the host's recommendation check). The watch
     /// sends no amount; the host decides it and runs its own checks.
@@ -123,6 +127,8 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// A COMMAND push awaiting the watch's ACK; pushes are sent one at a time.
     private var inflightCommand: (transactionID: UInt8, command: String)?
     private var diagnosticsRequested = false
+    /// Outcomes of the watch's requests waiting to go back to it (`RESULT`), oldest first.
+    private var pendingResults: [String] = []
     private var diagnosticsReplyTimeout: Task<Void, Never>?
     /// Whether Luped has messaged the phone since this session opened. Alloy
     /// disables a watchface's outbox whenever a non-system session (like this
@@ -318,6 +324,9 @@ public final class LupedTransport: PebbleTransportDelegate {
         if let command, command.hasPrefix("mute:"), let minutes = Int(command.dropFirst(5)), minutes > 0 {
             record(.fromWatch, "Watch asked to mute \(hostName) alerts for \(minutes) min (COMMAND \(command))")
             alertMuteRequested?(TimeInterval(minutes * 60))
+        } else if command == "carbs" {
+            record(.fromWatch, "Watch asked to add carbs (COMMAND carbs)")
+            carbsRequested?()
         } else if let command, command == "bolus" || command == "forcedbolus" {
             record(.fromWatch, "Watch asked for a \(command == "forcedbolus" ? "forced bolus" : "bolus") (COMMAND \(command))")
             bolusRequested?(command == "forcedbolus")
@@ -334,10 +343,12 @@ public final class LupedTransport: PebbleTransportDelegate {
         if let pending = inflightCommand, pending.transactionID == transactionID {
             inflightCommand = nil
             record(.fromWatch, "#\(transactionID) \(reply) · COMMAND \(pending.command)\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
-            if !acknowledged {
-                status.watchInfoNote = NSLocalizedString("The watch rejected the request; the watchface is probably not running.", bundle: .lupedKit, comment: "Pebble watch info note: request rejected")
-            } else {
-                awaitDiagnosticsReply()
+            if pending.command == "diagnostics" {
+                if !acknowledged {
+                    status.watchInfoNote = NSLocalizedString("The watch rejected the request; the watchface is probably not running.", bundle: .lupedKit, comment: "Pebble watch info note: request rejected")
+                } else {
+                    awaitDiagnosticsReply()
+                }
             }
             sendIfNeeded()
             return
@@ -468,16 +479,34 @@ public final class LupedTransport: PebbleTransportDelegate {
         }
     }
 
+    /// Tells the watch how one of its requests ended (`RESULT`), as
+    /// `<action>:<outcome>[:<detail>]`, e.g. `mute:ok` or
+    /// `bolus:refused:exceedsRecommendation`, so the watchface can react to it.
+    /// Sent after any pending reading; the last few are kept until a session opens.
+    public func sendResult(_ result: String) {
+        pendingResults.append(result)
+        if pendingResults.count > 5 {
+            pendingResults.removeFirst(pendingResults.count - 5)
+        }
+        sendIfNeeded()
+    }
+
     private func sendPendingCommand() {
-        guard diagnosticsRequested, awaitingWatchfaceRestart == nil, inflightPush == nil, inflightCommand == nil, transport.isSessionOpen else {
+        guard diagnosticsRequested || !pendingResults.isEmpty, awaitingWatchfaceRestart == nil, inflightPush == nil, inflightCommand == nil, transport.isSessionOpen else {
             return
         }
-        diagnosticsRequested = false
         let transactionID = transport.makeTransactionID()
-        inflightCommand = (transactionID, "diagnostics")
-
-        record(.toWatch, "#\(transactionID) COMMAND diagnostics")
-        transport.push(transactionID: transactionID, tuples: [(LupedMessageKey.command, .cString("diagnostics"))])
+        if diagnosticsRequested {
+            diagnosticsRequested = false
+            inflightCommand = (transactionID, "diagnostics")
+            record(.toWatch, "#\(transactionID) COMMAND diagnostics")
+            transport.push(transactionID: transactionID, tuples: [(LupedMessageKey.command, .cString("diagnostics"))])
+        } else {
+            let result = pendingResults.removeFirst()
+            inflightCommand = (transactionID, "RESULT \(result)")
+            record(.toWatch, "#\(transactionID) RESULT \(result)")
+            transport.push(transactionID: transactionID, tuples: [(LupedMessageKey.result, .cString(result))])
+        }
 
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(PebbleAppMessage.ackTimeout * 1_000_000_000))
