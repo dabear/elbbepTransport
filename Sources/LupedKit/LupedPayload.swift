@@ -56,6 +56,9 @@ public struct LupedPayload: Equatable {
     let coreData: String
     /// Start date of the latest reading, for diagnostics.
     let latestDate: Date
+    /// The loop status's last loop completed time (`DATA` 12), if sent. Later
+    /// than `latestDate` once the loop has run on that reading.
+    let lastLoopCompleted: Date?
     /// Number of history readings sent (index 4), for diagnostics. `0` in
     /// full-screen mode, which has no graph.
     let readingCount: Int
@@ -180,6 +183,7 @@ public struct LupedPayload: Equatable {
         }
 
         self.data = data
+        self.lastLoopCompleted = loopStatus?.lastLoopCompleted
         self.coreData = (try? JSONSerialization.data(withJSONObject: Array(message.prefix(10)))).flatMap { String(data: $0, encoding: .utf8) } ?? data
         self.latestDate = latest.date
         self.readingCount = history.count

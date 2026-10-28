@@ -20,11 +20,11 @@ enum LupedDelivery {
 
     enum Unchanged: Equatable { case delivered, inFlight }
 
-    /// After a new reading, how long to wait for the loop result (IOB, last loop)
-    /// that usually follows within a second, so both go in one message. A timeout,
-    /// not a wait for a signal: with the loop failing or not running, the reading
-    /// still goes out after this.
-    static let newReadingHold: TimeInterval = 1.5
+    /// After a new reading, the longest wait for the loop result (IOB, last loop)
+    /// so both go in one message. The reading goes out as soon as a snapshot's
+    /// last loop is later than the reading (the loop ran on it), usually within a
+    /// second; this timeout only applies when the loop doesn't run.
+    static let newReadingHold: TimeInterval = 10
     /// How long to collect changes that touch only the loop status or status line
     /// (`DATA` 10–14) before sending them in one message.
     static let followUpWindow: TimeInterval = 3
@@ -32,7 +32,8 @@ enum LupedDelivery {
     enum Timing: Equatable {
         /// Alerts, display and settings changes, or nothing to wait for.
         case now
-        /// A new reading while loop status is sent: wait `newReadingHold`.
+        /// A new reading while loop status is sent, before the loop has run on it:
+        /// wait for the loop result, at most `newReadingHold`.
         case holdForLoopResult
         /// Only loop status or status line changed: collect for `followUpWindow`.
         case collectFollowUps
@@ -46,7 +47,10 @@ enum LupedDelivery {
             return .now
         }
         if new.latestDate != previous.latestDate {
-            return needsLoopStatus ? .holdForLoopResult : .now
+            guard needsLoopStatus else { return .now }
+            // The loop has run on this reading: its result is in, send both now.
+            if let lastLoop = new.lastLoopCompleted, lastLoop >= new.latestDate { return .now }
+            return .holdForLoopResult
         }
         if new.coreData != previous.coreData {
             return .now
@@ -207,6 +211,7 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// sends `latestPayload` when it fires.
     private var delayedSend: Task<Void, Never>?
     private var delayedSendTiming: LupedDelivery.Timing?
+    private var delayedSendStarted = Date.distantPast
     /// Until then, sends aren't delayed: the user just changed a setting, and the
     /// host's snapshot with what it now requests should show at once.
     private var sendImmediatelyUntil = Date.distantPast
@@ -310,13 +315,16 @@ public final class LupedTransport: PebbleTransportDelegate {
         let timing = Date() < sendImmediatelyUntil ? .now : LupedDelivery.timing(new: payload, previous: inflightPush?.payload ?? deliveredPayload, needsLoopStatus: settings.needsLoopStatus)
         switch timing {
         case .now:
+            if delayedSendTiming == .holdForLoopResult, let lastLoop = payload.lastLoopCompleted, lastLoop >= payload.latestDate {
+                record(.info, String(format: "Loop result in after %.1f s: sending it with the reading", Date().timeIntervalSince(delayedSendStarted)))
+            }
             cancelDelayedSend()
             requestSend()
         case .holdForLoopResult:
             // A running hold already ends soon; a follow-up window gives way to it.
             guard delayedSendTiming != .holdForLoopResult else { return }
             startDelayedSend(after: LupedDelivery.newReadingHold, timing: timing)
-            record(.info, String(format: "New reading: waiting up to %.1f s for %@'s loop result to send both together", LupedDelivery.newReadingHold, hostName))
+            record(.info, String(format: "New reading: waiting for %@'s loop result (at most %.0f s) to send both together", hostName, LupedDelivery.newReadingHold))
         case .collectFollowUps:
             guard delayedSend == nil else { return }
             startDelayedSend(after: LupedDelivery.followUpWindow, timing: timing)
@@ -327,9 +335,13 @@ public final class LupedTransport: PebbleTransportDelegate {
     private func startDelayedSend(after delay: TimeInterval, timing: LupedDelivery.Timing) {
         delayedSend?.cancel()
         delayedSendTiming = timing
+        delayedSendStarted = Date()
         delayedSend = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
+            if timing == .holdForLoopResult {
+                self.record(.info, String(format: "No loop result within %.0f s: sending the reading without it", delay))
+            }
             self.delayedSend = nil
             self.delayedSendTiming = nil
             // A forced send (new session, watch request, Send Now) may have sent it already.

@@ -443,6 +443,15 @@ final class LupedSendTimingTests: XCTestCase {
         XCTAssertEqual(LupedDelivery.timing(new: payload([100, 110]), previous: payload([100]), needsLoopStatus: false), .now)
     }
 
+    // Once the loop has run on the reading (last loop later than the reading),
+    // the reading and its loop result go at once.
+    func testNewReadingWithItsLoopResultGoesNow() {
+        var ran = loop
+        ran.lastLoopCompleted = start.addingTimeInterval(300 + 0.15)
+        XCTAssertEqual(LupedDelivery.timing(new: payload([100, 110], loop: ran), previous: payload([100], loop: loop), needsLoopStatus: true), .now)
+        XCTAssertEqual(LupedDelivery.newReadingHold, 10)
+    }
+
     // Alerts are never delayed, not even together with a new reading.
     func testAlertChangesGoNow() {
         let old = payload([100], loop: loop)
