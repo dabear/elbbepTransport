@@ -58,14 +58,44 @@ public struct LupedSettings: Equatable {
     }
 }
 
-/// What the left of the watch's status strip shows: IOB and COB (the watch
-/// formats them and dims them when the loop is stale), or a line the phone
+/// What the left of the watch's status strip shows: nothing, IOB and COB (the
+/// watch formats them and dims them when the loop is stale), or a line the phone
 /// formats from the host's therapy values in the display unit.
+///
+/// Only what the choice needs goes to the watch; the rest of `DATA` 10–14 is
+/// `null`, and a host needn't supply it (see `needsLoopStatus`, `needsTherapy`).
 public enum LupedStatusLine: String, CaseIterable, Equatable {
+    /// An empty strip and no loop ring: `DATA` 10–14 are all `null`.
+    case none
     case iobAndCob
     case tempBasal
     case eventualGlucose
     case sensitivityAndTarget
+
+    /// Whether the watch needs the loop status (`DATA` 10–13). Every shown line
+    /// needs the loop's age and mode: they drive the loop ring and dim the strip
+    /// when the loop is stale.
+    public var needsLoopStatus: Bool { self != .none }
+
+    /// Whether the line is formatted from the host's therapy values.
+    public var needsTherapy: Bool {
+        switch self {
+        case .tempBasal, .eventualGlucose, .sensitivityAndTarget: true
+        case .none, .iobAndCob: false
+        }
+    }
+
+    /// The part of `status` the watch gets for this choice: IOB and COB only for
+    /// IOB & COB (the only line the watch formats from them), the loop's age and
+    /// mode for every shown line, and nothing for `.none`.
+    public func loopStatusToSend(_ status: LupedLoopStatus?) -> LupedLoopStatus? {
+        guard needsLoopStatus, var status else { return nil }
+        if self != .iobAndCob {
+            status.insulinOnBoard = nil
+            status.carbsOnBoard = nil
+        }
+        return status
+    }
 }
 
 /// Settings → Devices → Pebble kept in `UserDefaults`. The property names equal

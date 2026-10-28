@@ -251,7 +251,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             alarmStatus = status
             record(.info, status)
         }
-        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: snapshot.loopStatus, statusLine: LupedPayload.statusLine(settings.statusLine, therapy: snapshot.therapy, unit: snapshot.unit)) else {
+        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: settings.statusLine.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(settings.statusLine, therapy: snapshot.therapy, unit: snapshot.unit)) else {
             record(.info, String(format: "No usable CGM readings among %ld stored samples; nothing to send", snapshot.storedSampleCount))
             return
         }

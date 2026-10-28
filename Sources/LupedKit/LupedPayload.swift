@@ -71,14 +71,14 @@ public struct LupedPayload: Equatable {
     /// The status-strip text for `choice`, formatted in the display unit. ISF &
     /// target is too long for the space before the glucose ring, so it is sent as
     /// "ISF\ttarget": the watch puts the target between the ring and the CGM time.
-    /// `nil` for IOB and COB (the watch formats those) or when the host sent
-    /// nothing to show.
+    /// `nil` for none, for IOB and COB (the watch formats those), or when the host
+    /// sent nothing to show.
     public static func statusLine(_ choice: LupedStatusLine, therapy: LupedTherapy?, unit: LupedUnit) -> String? {
         let glucose = { (mgdl: Double) -> String in
             unit == .millimolesPerLiter ? String(format: "%.1f", unit.value(fromMilligramsPerDeciliter: mgdl)) : String(format: "%.0f", mgdl)
         }
         switch choice {
-        case .iobAndCob:
+        case .none, .iobAndCob:
             return nil
         case .tempBasal:
             if let temp = therapy?.tempBasalRate { return String(format: "Temp %.2f U/h", temp) }
@@ -141,7 +141,7 @@ public struct LupedPayload: Equatable {
             (loopStatus?.carbsOnBoard.map { Self.rounded($0, scale: 0) } ?? NSNull(), "carbs on board (g)"),
             (loopStatus?.lastLoopCompleted.map { Int64($0.timeIntervalSince1970 * 1_000) } ?? NSNull(), "last loop completed (milliseconds since Unix epoch)"),
             (loopStatus?.isClosedLoop.map { $0 ? 1 : 0 } ?? NSNull(), loopStatus?.isClosedLoop.map { $0 ? "closed loop" : "open loop" } ?? "closed or open loop (not sent by the host)"),
-            (statusLine ?? NSNull(), statusLine == nil ? "status line: IOB and COB, formatted on the watch" : "status line"),
+            (statusLine ?? NSNull(), statusLine != nil ? "status line" : loopStatus?.insulinOnBoard == nil && loopStatus?.carbsOnBoard == nil ? "status line: none" : "status line: IOB and COB, formatted on the watch"),
         ]
         let message = fields.map(\.value)
 

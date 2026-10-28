@@ -113,7 +113,7 @@ final class LupedPayloadTests: XCTestCase {
             "11: null carbs on board (g)",
             "12: null last loop completed (milliseconds since Unix epoch)",
             "13: null closed or open loop (not sent by the host)",
-            "14: null status line: IOB and COB, formatted on the watch",
+            "14: null status line: none",
         ])
     }
 
@@ -327,5 +327,48 @@ final class LupedWatchDiagnosticsRestoreTests: XCTestCase {
         XCTAssertEqual(report.receivedAt, receivedAt)
         XCTAssertEqual(report.battery, 85)
         XCTAssertEqual(report.readingsReceived, 12)
+    }
+}
+
+final class LupedStatusLineChoiceTests: XCTestCase {
+    private let status = LupedLoopStatus(insulinOnBoard: 1.25, carbsOnBoard: 12, lastLoopCompleted: Date(timeIntervalSince1970: 1_800_000_000), isClosedLoop: true)
+
+    // None: an empty strip and no loop ring, so nothing is requested or sent.
+    func testNoneSendsNothing() {
+        XCTAssertFalse(LupedStatusLine.none.needsLoopStatus)
+        XCTAssertFalse(LupedStatusLine.none.needsTherapy)
+        XCTAssertNil(LupedStatusLine.none.loopStatusToSend(status))
+        XCTAssertNil(LupedPayload.statusLine(.none, therapy: LupedTherapy(eventualGlucose: 110), unit: .milligramsPerDeciliter))
+    }
+
+    func testIOBAndCOBSendsTheWholeLoopStatus() {
+        XCTAssertTrue(LupedStatusLine.iobAndCob.needsLoopStatus)
+        XCTAssertFalse(LupedStatusLine.iobAndCob.needsTherapy)
+        XCTAssertEqual(LupedStatusLine.iobAndCob.loopStatusToSend(status), status)
+    }
+
+    // Other lines keep the loop's age and mode (loop ring, stale dimming) but not IOB/COB.
+    func testTherapyLinesDropIOBAndCOB() {
+        for choice in [LupedStatusLine.tempBasal, .eventualGlucose, .sensitivityAndTarget] {
+            XCTAssertTrue(choice.needsTherapy, "\(choice)")
+            let sent = choice.loopStatusToSend(status)
+            XCTAssertNil(sent?.insulinOnBoard)
+            XCTAssertNil(sent?.carbsOnBoard)
+            XCTAssertEqual(sent?.lastLoopCompleted, status.lastLoopCompleted)
+            XCTAssertEqual(sent?.isClosedLoop, true)
+        }
+    }
+
+    func testNonePayloadHasNullStatusFieldsAndSaysSo() throws {
+        let readings = [LupedReading(date: Date(timeIntervalSince1970: 1_800_000_000), milligramsPerDeciliter: 110, trend: nil)]
+        let payload = try XCTUnwrap(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, loopStatus: LupedStatusLine.none.loopStatusToSend(status), statusLine: nil))
+        XCTAssertTrue(payload.data.hasSuffix(",null,null,null,null,null]"), payload.data)
+        let last = try XCTUnwrap(payload.logDetails.components(separatedBy: "\n").dropLast().last)
+        XCTAssertTrue(last.hasSuffix("status line: none"), last)
+    }
+
+    func testStoredNoneRoundTrips() {
+        let settings = LupedSettings(isEnabled: true, statusLine: LupedStatusLine.none)
+        XCTAssertEqual(LupedSettings(rawValue: settings.rawValue).statusLine, LupedStatusLine.none)
     }
 }
