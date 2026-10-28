@@ -101,13 +101,13 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// `mute:<minutes>`), with the requested duration. The host decides whether
     /// its user allowed muting from the watch.
     public var alertMuteRequested: ((TimeInterval) -> Void)?
-    /// Called when the watch asks to add carbs (`COMMAND carbs`). The watch sends
-    /// no amount; the host decides it and runs its own checks.
-    public var carbsRequested: (() -> Void)?
-    /// Called when the watch asks for a bolus (`COMMAND bolus`, or
-    /// `forcedbolus` to skip only the host's recommendation check). The watch
-    /// sends no amount; the host decides it and runs its own checks.
-    public var bolusRequested: ((_ forced: Bool) -> Void)?
+    /// Called when the watch asks to add carbs (`COMMAND carbs:<grams>`), with
+    /// the grams the watch chose. The host runs its own checks.
+    public var carbsRequested: ((_ grams: Double) -> Void)?
+    /// Called when the watch asks for a bolus (`COMMAND bolus:<units>`, or
+    /// `forcedbolus:<units>` to skip only the host's recommendation check), with
+    /// the units the watch chose. The host runs its own checks.
+    public var bolusRequested: ((_ units: Double, _ forced: Bool) -> Void)?
 
     /// Last logged alarm state, so the log records each change once.
     private var alarmStatus: String?
@@ -324,12 +324,18 @@ public final class LupedTransport: PebbleTransportDelegate {
         if let command, command.hasPrefix("mute:"), let minutes = Int(command.dropFirst(5)), minutes > 0 {
             record(.fromWatch, "Watch asked to mute \(hostName) alerts for \(minutes) min (COMMAND \(command))")
             alertMuteRequested?(TimeInterval(minutes * 60))
-        } else if command == "carbs" {
-            record(.fromWatch, "Watch asked to add carbs (COMMAND carbs)")
-            carbsRequested?()
-        } else if let command, command == "bolus" || command == "forcedbolus" {
-            record(.fromWatch, "Watch asked for a \(command == "forcedbolus" ? "forced bolus" : "bolus") (COMMAND \(command))")
-            bolusRequested?(command == "forcedbolus")
+        } else if let command, let request = LupedWatchRequest(command: command) {
+            switch request {
+            case .carbs(let grams?):
+                record(.fromWatch, String(format: "Watch asked to add %g g of carbs (COMMAND %@)", grams, command))
+                carbsRequested?(grams)
+            case .bolus(let units?, let forced):
+                record(.fromWatch, String(format: "Watch asked for a %g U %@(COMMAND %@)", units, forced ? "forced bolus " : "bolus ", command))
+                bolusRequested?(units, forced)
+            case .carbs(nil), .bolus(nil, _):
+                record(.error, "Watch request without a valid amount ignored (COMMAND \(command))")
+                sendResult("\(request.action):failed")
+            }
         } else if tuples[PebbleAppMessage.alloyReadyKey] != nil || command == "refresh" {
             record(.fromWatch, "Watchface requested refresh (\(command.map { "COMMAND \($0)" } ?? "ready handshake"))\n" + LupedPayload.alignedRows([("tuples", hex)]))
             sendIfNeeded(force: true)
@@ -795,6 +801,32 @@ extension LupedWatchDiagnostics {
             outcome = "a pop-up covered the watchface \(ms) ms in, so PebbleOS may have cut the buzz short"
         }
         return "Buzz for alert event \(buzz[0]) (\(level)) at \(time): \(outcome)"
+    }
+}
+
+/// A dosing request from the watch, with the amount it chose: `bolus:<units>`,
+/// `forcedbolus:<units>` or `carbs:<grams>`. The amount is `nil` when it is
+/// missing, not a number, or not above zero.
+enum LupedWatchRequest: Equatable {
+    case bolus(Double?, forced: Bool)
+    case carbs(Double?)
+
+    init?(command: String) {
+        let parts = command.split(separator: ":", maxSplits: 1).map(String.init)
+        let amount = parts.count == 2 ? Double(parts[1]).flatMap { $0.isFinite && $0 > 0 ? $0 : nil } : nil
+        switch parts[0] {
+        case "bolus": self = .bolus(amount, forced: false)
+        case "forcedbolus": self = .bolus(amount, forced: true)
+        case "carbs": self = .carbs(amount)
+        default: return nil
+        }
+    }
+
+    var action: String {
+        switch self {
+        case .bolus(_, let forced): return forced ? "forcedbolus" : "bolus"
+        case .carbs: return "carbs"
+        }
     }
 }
 

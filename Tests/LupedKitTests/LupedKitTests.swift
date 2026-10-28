@@ -183,6 +183,22 @@ final class LupedDeliveryTests: XCTestCase {
     }
 }
 
+final class LupedWatchRequestTests: XCTestCase {
+    // The watch chooses the amount; anything that isn't a positive number is
+    // kept as a request without an amount, so it can be answered "failed".
+    func testParsesAmounts() {
+        XCTAssertEqual(LupedWatchRequest(command: "bolus:0.1"), .bolus(0.1, forced: false))
+        XCTAssertEqual(LupedWatchRequest(command: "forcedbolus:1.25"), .bolus(1.25, forced: true))
+        XCTAssertEqual(LupedWatchRequest(command: "carbs:77"), .carbs(77))
+        XCTAssertEqual(LupedWatchRequest(command: "carbs"), .carbs(nil))
+        XCTAssertEqual(LupedWatchRequest(command: "bolus:-1"), .bolus(nil, forced: false))
+        XCTAssertEqual(LupedWatchRequest(command: "bolus:abc"), .bolus(nil, forced: false))
+        XCTAssertNil(LupedWatchRequest(command: "refresh"))
+        XCTAssertNil(LupedWatchRequest(command: "mute:30"))
+        XCTAssertEqual(LupedWatchRequest(command: "forcedbolus:x")?.action, "forcedbolus")
+    }
+}
+
 final class LupedWatchDiagnosticsLogTests: XCTestCase {
     // A version-2 snapshot decodes one line per field, with the latency buckets
     // shown inline, and every field has a description.
