@@ -42,17 +42,17 @@ final class LupedPayloadTests: XCTestCase {
     func testStatusLineChoices() throws {
         let therapy = LupedTherapy(tempBasalRate: 0.45, scheduledBasalRate: 0.8, insulinSensitivity: 45, eventualGlucose: 110, correctionRange: 100...110)
         XCTAssertNil(LupedPayload.statusLine(.iobAndCob, therapy: therapy, unit: .milligramsPerDeciliter))
-        // "left\tright": before the glucose ring, and between it and the CGM time.
-        XCTAssertEqual(LupedPayload.statusLine(.tempBasal, therapy: therapy, unit: .milligramsPerDeciliter), "Temp U/h\t0.45")
-        XCTAssertEqual(LupedPayload.statusLine(.tempBasal, therapy: LupedTherapy(scheduledBasalRate: 0.8), unit: .milligramsPerDeciliter), "Basal U/h\t0.80")
-        XCTAssertEqual(LupedPayload.statusLine(.eventualGlucose, therapy: therapy, unit: .millimolesPerLiter), "Eventual\t6.1")
+        // Only ISF & target is split ("ISF\ttarget") around the watch's glucose ring.
+        XCTAssertEqual(LupedPayload.statusLine(.tempBasal, therapy: therapy, unit: .milligramsPerDeciliter), "Temp 0.45 U/h")
+        XCTAssertEqual(LupedPayload.statusLine(.tempBasal, therapy: LupedTherapy(scheduledBasalRate: 0.8), unit: .milligramsPerDeciliter), "Basal 0.80 U/h")
+        XCTAssertEqual(LupedPayload.statusLine(.eventualGlucose, therapy: therapy, unit: .millimolesPerLiter), "Eventual 6.1")
         XCTAssertEqual(LupedPayload.statusLine(.sensitivityAndTarget, therapy: therapy, unit: .milligramsPerDeciliter), "ISF 45\t100–110")
         XCTAssertEqual(LupedPayload.statusLine(.sensitivityAndTarget, therapy: therapy, unit: .millimolesPerLiter), "ISF 2.5\t5.6–6.1")
         XCTAssertEqual(LupedPayload.statusLine(.sensitivityAndTarget, therapy: LupedTherapy(insulinSensitivity: 45), unit: .milligramsPerDeciliter), "ISF 45\t")
         XCTAssertNil(LupedPayload.statusLine(.eventualGlucose, therapy: nil, unit: .milligramsPerDeciliter))
 
-        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, statusLine: "Temp U/h\t0.45"))
-        XCTAssertTrue(payload.data.hasSuffix(",\"Temp U/h\\t0.45\"]"), payload.data)
+        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, statusLine: "ISF 45\t100–110"))
+        XCTAssertTrue(payload.data.hasSuffix(",\"ISF 45\\t100–110\"]"), payload.data)
     }
 
     func testFullScreenSendsNoHistory() throws {

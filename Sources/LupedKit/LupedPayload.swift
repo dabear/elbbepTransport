@@ -68,11 +68,11 @@ public struct LupedPayload: Equatable {
     /// Indexed by the protocol's direction value (DoubleDown … DoubleUp).
     private static let trendArrows = ["⇊", "↓", "↘", "→", "↗", "↑", "⇈"]
 
-    /// The status-strip text for `choice`, formatted in the display unit, as
-    /// "left\tright": the watch puts the left part before the glucose ring and the
-    /// right part between the ring and the CGM time, the two free spaces on that
-    /// line (~57 and ~36 px). `nil` for IOB and COB (the watch formats those) or
-    /// when the host sent nothing to show.
+    /// The status-strip text for `choice`, formatted in the display unit. ISF &
+    /// target is too long for the space before the glucose ring, so it is sent as
+    /// "ISF\ttarget": the watch puts the target between the ring and the CGM time.
+    /// `nil` for IOB and COB (the watch formats those) or when the host sent
+    /// nothing to show.
     public static func statusLine(_ choice: LupedStatusLine, therapy: LupedTherapy?, unit: LupedUnit) -> String? {
         let glucose = { (mgdl: Double) -> String in
             unit == .millimolesPerLiter ? String(format: "%.1f", unit.value(fromMilligramsPerDeciliter: mgdl)) : String(format: "%.0f", mgdl)
@@ -81,10 +81,10 @@ public struct LupedPayload: Equatable {
         case .iobAndCob:
             return nil
         case .tempBasal:
-            if let temp = therapy?.tempBasalRate { return String(format: "Temp U/h\t%.2f", temp) }
-            return therapy?.scheduledBasalRate.map { String(format: "Basal U/h\t%.2f", $0) }
+            if let temp = therapy?.tempBasalRate { return String(format: "Temp %.2f U/h", temp) }
+            return therapy?.scheduledBasalRate.map { String(format: "Basal %.2f U/h", $0) }
         case .eventualGlucose:
-            return therapy?.eventualGlucose.map { "Eventual\t" + glucose($0) }
+            return therapy?.eventualGlucose.map { "Eventual " + glucose($0) }
         case .sensitivityAndTarget:
             let isf = therapy?.insulinSensitivity.map { "ISF " + glucose($0) } ?? ""
             let target = therapy?.correctionRange.map { glucose($0.lowerBound) + "–" + glucose($0.upperBound) } ?? ""
