@@ -501,20 +501,6 @@ public final class LupedTransport: PebbleTransportDelegate {
         sendPendingCommand()
     }
 
-    /// Asks for fresh diagnostics only when the watch can answer right away: it has
-    /// messaged the phone this session, so its outbox is open. Never restarts the
-    /// watchface, so a settings screen can call it whenever it appears.
-    public func requestDiagnosticsIfReachable() {
-        guard transport.isSessionOpen, heardFromWatchThisSession, !diagnosticsRequested,
-              awaitingWatchfaceRestart == nil, inflightCommand == nil
-        else {
-            return
-        }
-        record(.info, "Watch info requested (settings opened)")
-        diagnosticsRequested = true
-        sendPendingCommand()
-    }
-
     /// Shows a diagnostics report the host saved from an earlier launch until the
     /// watch sends a newer one. Pair with `diagnosticsDidArrive`.
     public func restoreDiagnostics(json: String, receivedAt: Date) {
