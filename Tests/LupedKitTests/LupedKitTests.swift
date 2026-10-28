@@ -18,18 +18,29 @@ final class LupedPayloadTests: XCTestCase {
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, fullScreen: false))
         let timestamp = Int64(start.addingTimeInterval(300).timeIntervalSince1970 * 1_000)
         // Minimal Luped protocol: [version, glucose, delta, trend, history,
-        // unitsFlag, timestamp, fullScreen, hostAlertLevel, alertEvent]. No
-        // thresholds travel; the trailing zeros are the alert level and event.
-        XCTAssertEqual(payload.data, "[1,110,10,4,[100,110],0,\(timestamp),0,0,0]")
+        // unitsFlag, timestamp, fullScreen, hostAlertLevel, alertEvent, iob, cob,
+        // lastLoop, closedLoop]. No thresholds travel; the zeros are the alert
+        // level and event, and the loop status is null when the host sends none.
+        XCTAssertEqual(payload.data, "[1,110,10,4,[100,110],0,\(timestamp),0,0,0,null,null,null,null]")
         XCTAssertEqual(payload.readingCount, 2)
     }
 
     // The full-screen ring has no graph: the history is sent empty, while the
     // current value, delta and trend still come from the full readings.
+    // Loop status: IOB to two decimals, whole grams of COB, the last loop in ms
+    // since the epoch and the closed-loop flag.
+    func testLoopStatusFields() throws {
+        let lastLoop = start.addingTimeInterval(240)
+        let status = LupedLoopStatus(insulinOnBoard: 1.234, carbsOnBoard: 12.6, lastLoopCompleted: lastLoop, isClosedLoop: false)
+        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, loopStatus: status))
+        XCTAssertTrue(payload.data.hasSuffix(",1.23,13,\(Int64(lastLoop.timeIntervalSince1970 * 1_000)),0]"), payload.data)
+        XCTAssertTrue(payload.logDetails.contains("open loop"), payload.logDetails)
+    }
+
     func testFullScreenSendsNoHistory() throws {
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, fullScreen: true))
         let timestamp = Int64(start.addingTimeInterval(300).timeIntervalSince1970 * 1_000)
-        XCTAssertEqual(payload.data, "[1,110,10,4,[],0,\(timestamp),1,0,0]")
+        XCTAssertEqual(payload.data, "[1,110,10,4,[],0,\(timestamp),1,0,0,null,null,null,null]")
         XCTAssertEqual(payload.readingCount, 0)
     }
 
@@ -42,10 +53,11 @@ final class LupedPayloadTests: XCTestCase {
         XCTAssertTrue(levelLine.hasSuffix("host-issued alert level: none (no active alerts from Loop)"), levelLine)
     }
 
-    // The host alert level (index 8) is followed by the alert event (index 9).
-    func testAlertLevelAndEventAreTheLastFields() throws {
+    // The host alert level (index 8) is followed by the alert event (index 9),
+    // then the loop status (indexes 10-13).
+    func testAlertLevelAndEventAreIndexes8And9() throws {
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 2, alertEvent: 417))
-        XCTAssertTrue(payload.data.hasSuffix(",2,417]"), payload.data)
+        XCTAssertTrue(payload.data.hasSuffix(",2,417,null,null,null,null]"), payload.data)
     }
 
     // A repeat of an active alert keeps the level but changes the event, so the
@@ -79,6 +91,10 @@ final class LupedPayloadTests: XCTestCase {
             "7: 1 full-screen ring",
             "8: 0 host-issued alert level: none",
             "9: 0 alert event (changes each time the host fires an alert)",
+            "10: null insulin on board (U)",
+            "11: null carbs on board (g)",
+            "12: null last loop completed (milliseconds since Unix epoch)",
+            "13: null closed or open loop (not sent by the host)",
         ])
     }
 

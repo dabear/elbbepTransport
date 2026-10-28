@@ -54,14 +54,34 @@ public struct LupedSnapshot {
     /// Persist it across launches so a restart can't land on the value the watch
     /// last saw; any value works as long as it changes on every fire.
     public var alertEvent: Int
+    /// What the host's loop is doing, for the watch's IOB/COB and loop ring;
+    /// `nil` when the host doesn't provide it.
+    public var loopStatus: LupedLoopStatus?
 
-    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0) {
+    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil) {
         self.readings = readings
         self.storedSampleCount = storedSampleCount
         self.unit = unit
         self.hostAlertLevel = hostAlertLevel
         self.hostAlertReason = hostAlertReason
         self.alertEvent = alertEvent
+        self.loopStatus = loopStatus
+    }
+}
+
+/// The host's loop for the watch: insulin and carbs on board, when the loop
+/// last completed and whether it is closed. Any value may be unknown.
+public struct LupedLoopStatus: Equatable {
+    public var insulinOnBoard: Double?
+    public var carbsOnBoard: Double?
+    public var lastLoopCompleted: Date?
+    public var isClosedLoop: Bool?
+
+    public init(insulinOnBoard: Double? = nil, carbsOnBoard: Double? = nil, lastLoopCompleted: Date? = nil, isClosedLoop: Bool? = nil) {
+        self.insulinOnBoard = insulinOnBoard
+        self.carbsOnBoard = carbsOnBoard
+        self.lastLoopCompleted = lastLoopCompleted
+        self.isClosedLoop = isClosedLoop
     }
 }
 
@@ -209,7 +229,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             alarmStatus = status
             record(.info, status)
         }
-        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent) else {
+        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: snapshot.loopStatus) else {
             record(.info, String(format: "No usable CGM readings among %ld stored samples; nothing to send", snapshot.storedSampleCount))
             return
         }

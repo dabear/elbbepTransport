@@ -78,7 +78,7 @@ public struct LupedPayload: Equatable {
     /// `alertEvent` changes each time the host fires a glucose alert (the first
     /// fire and every repeat), so the watch can buzz on a repeat even though the
     /// alert level stays the same.
-    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0) {
+    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil) {
         let readings = Self.graphReadings(readings, limit: 12)
         guard let latest = readings.last else {
             return nil
@@ -112,6 +112,11 @@ public struct LupedPayload: Equatable {
             (fullScreen ? 1 : 0, fullScreen ? "full-screen ring" : "ring with graph"),
             (hostAlertLevel, "host-issued alert level: \(Self.alertLevelNames[hostAlertLevel] ?? "unknown")" + (hostAlertReason.map { " (\($0))" } ?? "")),
             (alertEvent, "alert event (changes each time the host fires an alert)"),
+            // Loop status for the watch's IOB/COB and loop ring; null when unknown.
+            (loopStatus?.insulinOnBoard.map { Self.rounded($0, scale: 2) } ?? NSNull(), "insulin on board (U)"),
+            (loopStatus?.carbsOnBoard.map { Self.rounded($0, scale: 0) } ?? NSNull(), "carbs on board (g)"),
+            (loopStatus?.lastLoopCompleted.map { Int64($0.timeIntervalSince1970 * 1_000) } ?? NSNull(), "last loop completed (milliseconds since Unix epoch)"),
+            (loopStatus?.isClosedLoop.map { $0 ? 1 : 0 } ?? NSNull(), loopStatus?.isClosedLoop.map { $0 ? "closed loop" : "open loop" } ?? "closed or open loop (not sent by the host)"),
         ]
         let message = fields.map(\.value)
 
@@ -173,6 +178,8 @@ public struct LupedPayload: Equatable {
             return String(value)
         case let value as Int:
             return String(value)
+        case is NSNull:
+            return "null"
         default:
             return String(describing: value)
         }
@@ -186,9 +193,13 @@ public struct LupedPayload: Equatable {
     /// `NSDecimalNumber` serializes exactly ("7.9"), whereas a `Double` would
     /// carry binary noise into the JSON ("7.9000000000000004").
     private static func rounded(_ value: Double, for unit: LupedUnit) -> NSDecimalNumber {
+        rounded(value, scale: unit == .millimolesPerLiter ? 1 : 0)
+    }
+
+    private static func rounded(_ value: Double, scale: Int16) -> NSDecimalNumber {
         let behavior = NSDecimalNumberHandler(
             roundingMode: .plain,
-            scale: unit == .millimolesPerLiter ? 1 : 0,
+            scale: scale,
             raiseOnExactness: false,
             raiseOnOverflow: false,
             raiseOnUnderflow: false,
