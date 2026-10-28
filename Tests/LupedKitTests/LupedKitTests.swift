@@ -422,3 +422,42 @@ final class LupedStatusLineChoiceTests: XCTestCase {
         XCTAssertTrue(LupedSettings(rawValue: [:]).loopRing, "the loop ring defaults to on")
     }
 }
+
+final class LupedSendTimingTests: XCTestCase {
+    private let start = Date(timeIntervalSince1970: 1_800_000_000)
+    private let loop = LupedLoopStatus(insulinOnBoard: 1.2, carbsOnBoard: 10, lastLoopCompleted: Date(timeIntervalSince1970: 1_799_999_700), isClosedLoop: true)
+
+    private func payload(_ mgdl: [Double], alertLevel: Int = 0, alertEvent: Int = 0, fullScreen: Bool = false, loop: LupedLoopStatus? = nil) -> LupedPayload {
+        let readings = mgdl.enumerated().map { LupedReading(date: start.addingTimeInterval(Double($0.offset) * 300), milligramsPerDeciliter: $0.element, trend: nil) }
+        return LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: fullScreen, hostAlertLevel: alertLevel, alertEvent: alertEvent, loopStatus: loop)!
+    }
+
+    func testFirstMessageGoesNow() {
+        XCTAssertEqual(LupedDelivery.timing(new: payload([100]), previous: nil, needsLoopStatus: true), .now)
+    }
+
+    // A new reading waits briefly for the loop result, but only if loop status is sent.
+    func testNewReadingHoldsOnlyWithLoopStatus() {
+        let old = payload([100], loop: loop)
+        XCTAssertEqual(LupedDelivery.timing(new: payload([100, 110], loop: loop), previous: old, needsLoopStatus: true), .holdForLoopResult)
+        XCTAssertEqual(LupedDelivery.timing(new: payload([100, 110]), previous: payload([100]), needsLoopStatus: false), .now)
+    }
+
+    // Alerts are never delayed, not even together with a new reading.
+    func testAlertChangesGoNow() {
+        let old = payload([100], loop: loop)
+        XCTAssertEqual(LupedDelivery.timing(new: payload([100, 110], alertLevel: 2, alertEvent: 1, loop: loop), previous: old, needsLoopStatus: true), .now)
+        XCTAssertEqual(LupedDelivery.timing(new: payload([100], alertEvent: 1, loop: loop), previous: old, needsLoopStatus: true), .now)
+    }
+
+    func testLoopOnlyChangesAreCollected() {
+        var newer = loop
+        newer.lastLoopCompleted = loop.lastLoopCompleted?.addingTimeInterval(300)
+        newer.insulinOnBoard = 1.1
+        XCTAssertEqual(LupedDelivery.timing(new: payload([100], loop: newer), previous: payload([100], loop: loop), needsLoopStatus: true), .collectFollowUps)
+    }
+
+    func testDisplayChangesGoNow() {
+        XCTAssertEqual(LupedDelivery.timing(new: payload([100, 110], fullScreen: true, loop: loop), previous: payload([100, 110], loop: loop), needsLoopStatus: true), .now)
+    }
+}

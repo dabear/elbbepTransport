@@ -51,6 +51,9 @@ public struct LupedPayload: Equatable {
     private static let maximumDeltaInterval: TimeInterval = 15 * 60
 
     let data: String
+    /// `DATA` indexes 0–9 (glucose, history, display, alerts) without the loop
+    /// status and status line, so the transport can tell a loop-only change apart.
+    let coreData: String
     /// Start date of the latest reading, for diagnostics.
     let latestDate: Date
     /// Number of history readings sent (index 4), for diagnostics. `0` in
@@ -177,6 +180,7 @@ public struct LupedPayload: Equatable {
         }
 
         self.data = data
+        self.coreData = (try? JSONSerialization.data(withJSONObject: Array(message.prefix(10)))).flatMap { String(data: $0, encoding: .utf8) } ?? data
         self.latestDate = latest.date
         self.readingCount = history.count
         self.hostAlertLevel = hostAlertLevel

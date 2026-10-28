@@ -20,6 +20,40 @@ enum LupedDelivery {
 
     enum Unchanged: Equatable { case delivered, inFlight }
 
+    /// After a new reading, how long to wait for the loop result (IOB, last loop)
+    /// that usually follows within a second, so both go in one message. A timeout,
+    /// not a wait for a signal: with the loop failing or not running, the reading
+    /// still goes out after this.
+    static let newReadingHold: TimeInterval = 1.5
+    /// How long to collect changes that touch only the loop status or status line
+    /// (`DATA` 10–14) before sending them in one message.
+    static let followUpWindow: TimeInterval = 3
+
+    enum Timing: Equatable {
+        /// Alerts, display and settings changes, or nothing to wait for.
+        case now
+        /// A new reading while loop status is sent: wait `newReadingHold`.
+        case holdForLoopResult
+        /// Only loop status or status line changed: collect for `followUpWindow`.
+        case collectFollowUps
+    }
+
+    /// When to send `new`, compared with what the watch has or is about to get
+    /// (`previous`). Alert changes are never delayed.
+    static func timing(new: LupedPayload, previous: LupedPayload?, needsLoopStatus: Bool) -> Timing {
+        guard let previous else { return .now }
+        if new.hostAlertLevel != previous.hostAlertLevel || new.alertEvent != previous.alertEvent {
+            return .now
+        }
+        if new.latestDate != previous.latestDate {
+            return needsLoopStatus ? .holdForLoopResult : .now
+        }
+        if new.coreData != previous.coreData {
+            return .now
+        }
+        return .collectFollowUps
+    }
+
     /// The RESULT to send again when the watchface restarted while it was in
     /// flight; `nil` for other commands (diagnostics), which are just dropped.
     static func resultToResend(afterRestart inflightCommand: String) -> String? {
@@ -168,7 +202,14 @@ public final class LupedTransport: PebbleTransportDelegate {
     private var inflightPush: (transactionID: UInt8, generation: Int, payload: LupedPayload, sentAt: Date)?
     /// The `DATA` the watch acknowledged in this session. A host refresh that
     /// produces the same `DATA` is not sent again; cleared when the session resets.
-    private var deliveredData: String?
+    private var deliveredPayload: LupedPayload?
+    /// A send waiting for the loop result or collecting loop-only changes; it
+    /// sends `latestPayload` when it fires.
+    private var delayedSend: Task<Void, Never>?
+    private var delayedSendTiming: LupedDelivery.Timing?
+    /// Until then, sends aren't delayed: the user just changed a setting, and the
+    /// host's snapshot with what it now requests should show at once.
+    private var sendImmediatelyUntil = Date.distantPast
     /// Alert fires the watch acknowledged at a level above 0, newest last,
     /// checked against the buzz records in the watch's diagnostics.
     private var deliveredAlerts: [LupedDeliveredAlert] = []
@@ -251,7 +292,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         }
 
         latestPayload = payload
-        switch LupedDelivery.unchangedData(payload.data, delivered: deliveredData, inFlight: inflightPush?.payload.data) {
+        switch LupedDelivery.unchangedData(payload.data, delivered: deliveredPayload?.data, inFlight: inflightPush?.payload.data) {
         case .delivered:
             requestGeneration = deliveredGeneration
             record(.info, "Unchanged DATA; the watch already has it, not sent again")
@@ -259,13 +300,56 @@ public final class LupedTransport: PebbleTransportDelegate {
             requestGeneration = max(deliveredGeneration, inflightPush?.generation ?? 0)
             record(.info, "Unchanged DATA; the same message is already on its way")
         case nil:
-            requestSend()
+            scheduleSend(payload)
         }
+    }
+
+    /// Sends now, or after a short wait so a reading and the loop result that
+    /// follows it, or several loop-only changes, go in one message.
+    private func scheduleSend(_ payload: LupedPayload) {
+        let timing = Date() < sendImmediatelyUntil ? .now : LupedDelivery.timing(new: payload, previous: inflightPush?.payload ?? deliveredPayload, needsLoopStatus: settings.needsLoopStatus)
+        switch timing {
+        case .now:
+            cancelDelayedSend()
+            requestSend()
+        case .holdForLoopResult:
+            // A running hold already ends soon; a follow-up window gives way to it.
+            guard delayedSendTiming != .holdForLoopResult else { return }
+            startDelayedSend(after: LupedDelivery.newReadingHold, timing: timing)
+            record(.info, String(format: "New reading: waiting up to %.1f s for %@'s loop result to send both together", LupedDelivery.newReadingHold, hostName))
+        case .collectFollowUps:
+            guard delayedSend == nil else { return }
+            startDelayedSend(after: LupedDelivery.followUpWindow, timing: timing)
+            record(.info, String(format: "Loop values changed: collecting further changes for %.0f s", LupedDelivery.followUpWindow))
+        }
+    }
+
+    private func startDelayedSend(after delay: TimeInterval, timing: LupedDelivery.Timing) {
+        delayedSend?.cancel()
+        delayedSendTiming = timing
+        delayedSend = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            self.delayedSend = nil
+            self.delayedSendTiming = nil
+            // A forced send (new session, watch request, Send Now) may have sent it already.
+            guard let latest = self.latestPayload,
+                  LupedDelivery.unchangedData(latest.data, delivered: self.deliveredPayload?.data, inFlight: self.inflightPush?.payload.data) == nil
+            else { return }
+            self.requestSend()
+        }
+    }
+
+    private func cancelDelayedSend() {
+        delayedSend?.cancel()
+        delayedSend = nil
+        delayedSendTiming = nil
     }
 
     // MARK: - Settings
 
     private func settingsDidChange(from old: LupedSettings) {
+        sendImmediatelyUntil = Date().addingTimeInterval(5)
         if settings.alarmsEnabled != old.alarmsEnabled {
             record(.info, "Watch alarms \(settings.alarmsEnabled ? "enabled" : "disabled")")
         }
@@ -330,7 +414,8 @@ public final class LupedTransport: PebbleTransportDelegate {
             record(.info, "Session reset before the watch acknowledged the pushed reading")
         }
         inflightPush = nil
-        deliveredData = nil
+        deliveredPayload = nil
+        cancelDelayedSend()
         pushAckTimeout?.cancel()
         pushAckTimeout = nil
         // A new session re-sends the reading itself.
@@ -413,7 +498,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         if acknowledged {
             record(.fromWatch, "#\(transactionID) ACK in \(elapsed) ms · watch stored the \(readingTime) reading, \(push.payload.readingCount == 0 ? "no history (full-screen ring)" : "\(push.payload.readingCount) history points")\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
             deliveredGeneration = push.generation
-            deliveredData = push.payload.data
+            deliveredPayload = push.payload
             if push.payload.hostAlertLevel > 0, push.payload.alertEvent != deliveredAlerts.last?.event {
                 deliveredAlerts.append(.init(event: push.payload.alertEvent, level: push.payload.hostAlertLevel, deliveredAt: Date()))
                 deliveredAlerts = Array(deliveredAlerts.suffix(10))
