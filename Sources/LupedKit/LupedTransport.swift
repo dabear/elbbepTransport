@@ -479,9 +479,9 @@ public final class LupedTransport: PebbleTransportDelegate {
         }
     }
 
-    /// Tells the watch how one of its requests ended (`RESULT`), as
-    /// `<action>:<outcome>[:<detail>]`, e.g. `mute:ok` or
-    /// `bolus:refused:exceedsRecommendation`, so the watchface can react to it.
+    /// Tells the watch how one of its requests ended (`RESULT`), kept short as
+    /// `<action>:<outcome>`, e.g. `mute:ok` or `bolus:refused`, so the watchface
+    /// can react to it. The reason goes to the communication log.
     /// Sent after any pending reading; the last few are kept until a session opens.
     public func sendResult(_ result: String) {
         pendingResults.append(result)
