@@ -96,6 +96,10 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// Supplies the current readings and alert state. Returns `nil` while the
     /// host is not ready; throwing logs the error.
     public var snapshotProvider: (() async throws -> LupedSnapshot?)?
+    /// Called when the watch asks to mute the host's alerts (`COMMAND`
+    /// `mute:<minutes>`), with the requested duration. The host decides whether
+    /// its user allowed muting from the watch.
+    public var alertMuteRequested: ((TimeInterval) -> Void)?
 
     /// Last logged alarm state, so the log records each change once.
     private var alarmStatus: String?
@@ -307,7 +311,10 @@ public final class LupedTransport: PebbleTransportDelegate {
         // only then does Luped send its `refresh` command. Answer both with the
         // latest reading.
         let command = tuples[LupedMessageKey.command]?.string
-        if tuples[PebbleAppMessage.alloyReadyKey] != nil || command == "refresh" {
+        if let command, command.hasPrefix("mute:"), let minutes = Int(command.dropFirst(5)), minutes > 0 {
+            record(.fromWatch, "Watch asked to mute \(hostName) alerts for \(minutes) min (COMMAND \(command))")
+            alertMuteRequested?(TimeInterval(minutes * 60))
+        } else if tuples[PebbleAppMessage.alloyReadyKey] != nil || command == "refresh" {
             record(.fromWatch, "Watchface requested refresh (\(command.map { "COMMAND \($0)" } ?? "ready handshake"))\n" + LupedPayload.alignedRows([("tuples", hex)]))
             sendIfNeeded(force: true)
         } else if tuples[LupedMessageKey.diagnostics] == nil {
