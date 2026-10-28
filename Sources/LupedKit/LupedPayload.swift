@@ -161,7 +161,7 @@ public struct LupedPayload: Equatable {
             (hostAlertLevel, "host-issued alert level: \(Self.alertLevelNames[hostAlertLevel] ?? "unknown")" + (hostAlertReason.map { " (\($0))" } ?? "")),
             (alertEvent, "alert event (changes each time the host fires an alert)"),
             // Loop status for the watch's IOB/COB and loop ring; null when not sent.
-            (loopStatus?.insulinOnBoard.map { Self.rounded($0, scale: 2) } ?? NSNull(), loopStatus?.insulinOnBoard != nil ? "insulin on board (U)" : "insulin on board" + Self.notSent(insulinAndCarbs: true, settings: settings)),
+            (loopStatus?.insulinOnBoard.map { Self.rounded($0, scale: 1) } ?? NSNull(), loopStatus?.insulinOnBoard != nil ? "insulin on board (U)" : "insulin on board" + Self.notSent(insulinAndCarbs: true, settings: settings)),
             (loopStatus?.carbsOnBoard.map { Self.rounded($0, scale: 0) } ?? NSNull(), loopStatus?.carbsOnBoard != nil ? "carbs on board (g)" : "carbs on board" + Self.notSent(insulinAndCarbs: true, settings: settings)),
             (loopStatus?.lastLoopCompleted.map { Int64($0.timeIntervalSince1970 * 1_000) } ?? NSNull(), loopStatus?.lastLoopCompleted != nil ? "last loop completed (milliseconds since Unix epoch)" : "last loop completed" + Self.notSent(insulinAndCarbs: false, settings: settings)),
             (loopStatus?.isClosedLoop.map { $0 ? 1 : 0 } ?? NSNull(), loopStatus?.isClosedLoop.map { $0 ? "closed loop" : "open loop" } ?? "closed or open loop" + Self.notSent(insulinAndCarbs: false, settings: settings)),

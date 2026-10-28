@@ -27,13 +27,14 @@ final class LupedPayloadTests: XCTestCase {
 
     // The full-screen ring has no graph: the history is sent empty, while the
     // current value, delta and trend still come from the full readings.
-    // Loop status: IOB to two decimals, whole grams of COB, the last loop in ms
+    // Loop status: IOB to one decimal (so it changes about once a reading, not
+    // every minute), whole grams of COB, the last loop in ms
     // since the epoch and the closed-loop flag.
     func testLoopStatusFields() throws {
         let lastLoop = start.addingTimeInterval(240)
         let status = LupedLoopStatus(insulinOnBoard: 1.234, carbsOnBoard: 12.6, lastLoopCompleted: lastLoop, isClosedLoop: false)
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, loopStatus: status))
-        XCTAssertTrue(payload.data.hasSuffix(",1.23,13,\(Int64(lastLoop.timeIntervalSince1970 * 1_000)),0,null]"), payload.data)
+        XCTAssertTrue(payload.data.hasSuffix(",1.2,13,\(Int64(lastLoop.timeIntervalSince1970 * 1_000)),0,null]"), payload.data)
         XCTAssertTrue(payload.logDetails.contains("open loop"), payload.logDetails)
     }
 
