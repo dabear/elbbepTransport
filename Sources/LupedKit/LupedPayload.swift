@@ -41,6 +41,12 @@ public struct LupedPayload: Equatable {
     /// History needed to fill the watchface graph at a 5-minute CGM cadence.
     public static let historyInterval: TimeInterval = 2 * 60 * 60
 
+    /// The watch draws history values 5 minutes apart, so readings from a CGM
+    /// with a faster cadence (1-minute readings) are thinned to one about every
+    /// 5 minutes. The margin keeps every reading of a 5-minute CGM whose
+    /// timestamps jitter by a few seconds.
+    static let graphSpacing: TimeInterval = 4.5 * 60
+
     /// Readings further apart than this are not used for delta or computed trend.
     private static let maximumDeltaInterval: TimeInterval = 15 * 60
 
@@ -69,9 +75,7 @@ public struct LupedPayload: Equatable {
     /// fire and every repeat), so the watch can buzz on a repeat even though the
     /// alert level stays the same.
     init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0) {
-        let readings = readings
-            .sorted { $0.date < $1.date }
-            .suffix(12)
+        let readings = Self.graphReadings(readings, limit: 12)
         guard let latest = readings.last else {
             return nil
         }
@@ -187,8 +191,25 @@ public struct LupedPayload: Equatable {
         return NSDecimalNumber(value: value).rounding(accordingToBehavior: behavior)
     }
 
-    /// The reading before the latest, if it is recent enough to compare against.
-    private static func previousReading(in readings: ArraySlice<LupedReading>) -> LupedReading? {
+    /// The newest `limit` readings, oldest first, at least `graphSpacing` apart,
+    /// counted back from the latest reading so the newest value is always current.
+    static func graphReadings(_ readings: [LupedReading], limit: Int) -> [LupedReading] {
+        var kept: [LupedReading] = []
+        for reading in readings.sorted(by: { $0.date > $1.date }) {
+            if let newer = kept.last, newer.date.timeIntervalSince(reading.date) < graphSpacing {
+                continue
+            }
+            kept.append(reading)
+            if kept.count == limit {
+                break
+            }
+        }
+        return kept.reversed()
+    }
+
+    /// The reading before the latest in the thinned history (about 5 minutes
+    /// earlier), if it is recent enough to compare against.
+    private static func previousReading(in readings: [LupedReading]) -> LupedReading? {
         guard readings.count > 1,
               let previous = readings.dropLast().last,
               let latest = readings.last,

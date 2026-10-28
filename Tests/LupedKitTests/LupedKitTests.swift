@@ -119,6 +119,26 @@ final class LupedPayloadTests: XCTestCase {
         XCTAssertEqual(payload.readingCount, 12)
         XCTAssertTrue(payload.data.contains("[103,104,105,106,107,108,109,110,111,112,113,114]"), payload.data)
     }
+
+    // A 1-minute CGM: the graph still covers an hour (one value every 5 minutes,
+    // newest last), and the delta compares against the reading 5 minutes earlier.
+    func testOneMinuteReadingsAreThinnedToFiveMinutes() throws {
+        let minuteReadings = (0..<90).map { minute in
+            LupedReading(date: start.addingTimeInterval(Double(minute) * 60 + Double(minute % 3)), milligramsPerDeciliter: 100 + Double(minute), trend: nil)
+        }
+        let payload = try XCTUnwrap(LupedPayload(readings: minuteReadings, unit: .milligramsPerDeciliter, fullScreen: false))
+        XCTAssertEqual(payload.readingCount, 12)
+        XCTAssertTrue(payload.data.hasPrefix("[1,189,5,"), payload.data)
+        XCTAssertTrue(payload.data.contains("[134,139,144,149,154,159,164,169,174,179,184,189]"), payload.data)
+    }
+
+    // A 5-minute CGM whose readings arrive a few seconds early keeps every reading.
+    func testJitteredFiveMinuteReadingsAreAllKept() {
+        let jittered = (0..<12).map { index in
+            LupedReading(date: start.addingTimeInterval(Double(index) * 295), milligramsPerDeciliter: 100 + Double(index), trend: nil)
+        }
+        XCTAssertEqual(LupedPayload.graphReadings(jittered.shuffled(), limit: 12), jittered)
+    }
 }
 
 final class LupedAlarmStatusTests: XCTestCase {
