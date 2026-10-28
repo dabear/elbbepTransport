@@ -189,7 +189,8 @@ final class LupedWatchDiagnosticsLogTests: XCTestCase {
     func testDiagnosticsDecodeOneLinePerField() throws {
         var values: [Any] = [2, 1_792_957_000_000, 85] + Array(repeating: 0, count: 27)
         values.append([3, 1, 0, 0, 0, 0, 0, 0])  // index 30: latency buckets
-        values += Array(repeating: 0, count: 7)
+        values += Array(repeating: 0, count: 8)
+        values.append([])  // index 39: no buzzes
         XCTAssertEqual(values.count, LupedWatchDiagnostics.fieldDescriptions.count)
         let json = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: values), encoding: .utf8))
 
@@ -200,6 +201,47 @@ final class LupedWatchDiagnosticsLogTests: XCTestCase {
         XCTAssertEqual(decoded[2], "2: 85 battery (%)")
         XCTAssertTrue(decoded[30].hasPrefix("30: [3, 1, 0, 0, 0, 0, 0, 0] refresh responses by latency"), decoded[30])
         XCTAssertFalse(decoded.contains { $0.hasSuffix(" unknown") })
+    }
+
+    // Luped's buzz records decode to one line each after the table, naming the
+    // pop-up that covered the watchface so a missed buzz can be explained.
+    func testBuzzesDecodeBelowTheTable() throws {
+        var values: [Any] = [2] + Array(repeating: 0, count: 37) + [1]
+        values.append([[6, 3, 1_793_133_000_000, -1], [7, 3, 1_793_134_849_400, 230], [8, 2, 1_793_136_649_400, 0]])
+        let json = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: values), encoding: .utf8))
+
+        let lines = LupedWatchDiagnostics.logDecode(json: json).components(separatedBy: "\n")
+        XCTAssertEqual(lines.count, values.count + 2 + 3)
+        XCTAssertTrue(lines[values.count].hasSuffix("recent host-alert buzzes (listed below)"), lines[values.count])
+        XCTAssertTrue(lines[values.count].contains(" 3 "), lines[values.count])
+        XCTAssertTrue(lines[lines.count - 3].hasPrefix("Buzz for alert event 6 (critical) at "))
+        XCTAssertTrue(lines[lines.count - 3].hasSuffix(": nothing covered the watchface during the buzz"))
+        XCTAssertTrue(lines[lines.count - 2].hasSuffix("a pop-up covered the watchface 230 ms in, so PebbleOS may have cut the buzz short"))
+        XCTAssertTrue(lines[lines.count - 1].hasPrefix("Buzz for alert event 8 (warning)"))
+        XCTAssertTrue(lines[lines.count - 1].hasSuffix("a pop-up already covered the watchface, so PebbleOS may have dropped the buzz"))
+    }
+
+    // Fires the watch acknowledged are checked against its buzz records: one
+    // without a record means the watchface never tried to buzz.
+    func testBuzzCheckFindsFiresWithoutARecord() throws {
+        let now = Date(timeIntervalSince1970: 1_793_140_000)
+        var values: [Any] = [2, 0, 0, 1_793_120_000_000] + Array(repeating: 0, count: 34) + [1]
+        values.append([[6, 3, 1_793_133_000_000, -1]])
+        let json = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: values), encoding: .utf8))
+        let delivered = [
+            LupedDeliveredAlert(event: 5, level: 3, deliveredAt: Date(timeIntervalSince1970: 1_793_110_000)), // before the window
+            LupedDeliveredAlert(event: 6, level: 3, deliveredAt: Date(timeIntervalSince1970: 1_793_133_000)),
+            LupedDeliveredAlert(event: 7, level: 3, deliveredAt: Date(timeIntervalSince1970: 1_793_134_849)),
+            LupedDeliveredAlert(event: 8, level: 3, deliveredAt: now.addingTimeInterval(-2)), // too recent
+        ]
+
+        let check = try XCTUnwrap(LupedWatchDiagnostics.buzzCheck(json: json, delivered: delivered, receivedAt: now))
+        XCTAssertEqual(check.missing.map(\.event), [7])
+        XCTAssertTrue(check.message.contains("Alert event 7 (critical)"), check.message)
+
+        let allBuzzed = try XCTUnwrap(LupedWatchDiagnostics.buzzCheck(json: json, delivered: Array(delivered.prefix(2)), receivedAt: now))
+        XCTAssertTrue(allBuzzed.missing.isEmpty)
+        XCTAssertTrue(allBuzzed.message.hasSuffix("each of the 1 alert fires it acknowledged"), allBuzzed.message)
     }
 
     func testUnknownDiagnosticsFormatIsLoggedRaw() {

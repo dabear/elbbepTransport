@@ -109,6 +109,9 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// The `DATA` the watch acknowledged in this session. A host refresh that
     /// produces the same `DATA` is not sent again; cleared when the session resets.
     private var deliveredData: String?
+    /// Alert fires the watch acknowledged at a level above 0, newest last,
+    /// checked against the buzz records in the watch's diagnostics.
+    private var deliveredAlerts: [LupedDeliveredAlert] = []
     /// A COMMAND push awaiting the watch's ACK; pushes are sent one at a time.
     private var inflightCommand: (transactionID: UInt8, command: String)?
     private var diagnosticsRequested = false
@@ -291,6 +294,9 @@ public final class LupedTransport: PebbleTransportDelegate {
         if let diagnostics = tuples[LupedMessageKey.diagnostics]?.string {
             record(.fromWatch, "Watch diagnostics\n" + LupedWatchDiagnostics.logDecode(json: diagnostics))
             let receivedAt = Date()
+            if let check = LupedWatchDiagnostics.buzzCheck(json: diagnostics, delivered: deliveredAlerts, receivedAt: receivedAt) {
+                record(check.missing.isEmpty ? .info : .error, check.message)
+            }
             status.diagnostics = LupedWatchDiagnostics(json: diagnostics, receivedAt: receivedAt)
             diagnosticsDidArrive?(diagnostics, receivedAt)
             status.watchInfoNote = nil
@@ -335,6 +341,10 @@ public final class LupedTransport: PebbleTransportDelegate {
             record(.fromWatch, "#\(transactionID) ACK in \(elapsed) ms · watch stored the \(readingTime) reading, \(push.payload.readingCount == 0 ? "no history (full-screen ring)" : "\(push.payload.readingCount) history points")\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
             deliveredGeneration = push.generation
             deliveredData = push.payload.data
+            if push.payload.hostAlertLevel > 0, push.payload.alertEvent != deliveredAlerts.last?.event {
+                deliveredAlerts.append(.init(event: push.payload.alertEvent, level: push.payload.hostAlertLevel, deliveredAt: Date()))
+                deliveredAlerts = Array(deliveredAlerts.suffix(10))
+            }
             pushRetry?.cancel()
             pushRetry = nil
             retryDelay = 0
@@ -653,7 +663,13 @@ extension LupedWatchDiagnostics {
         "phone disconnected time, total (ms)",
         "longest phone disconnect (ms)",
         "phone disconnected now (1 = yes)",
+        "system pop-ups over the watchface (notifications, alarms, calls)",
+        "recent host-alert buzzes (listed below)",
     ]
+
+    /// Index of Luped's recent host-alert buzzes: up to 5 of
+    /// `[alert event, alert level, start (watch ms), outcome]`.
+    static let buzzesIndex = 39
 
     /// The raw `DIAGNOSTICS` JSON decoded one field per line, like the `DATA`
     /// decode. Falls back to the raw text when it isn't a version-2 array.
@@ -666,7 +682,9 @@ extension LupedWatchDiagnostics {
         }
         let fields: [(value: Any, description: String)] = values.enumerated().map { index, value in
             let shown: Any
-            if let number = value as? NSNumber {
+            if index == buzzesIndex, let buzzes = value as? [Any] {
+                shown = "\(buzzes.count)"
+            } else if let number = value as? NSNumber {
                 shown = number.int64Value
             } else if let list = value as? [Any] {
                 shown = "[" + list.map { ($0 as? NSNumber)?.stringValue ?? "\($0)" }.joined(separator: ", ") + "]"
@@ -675,8 +693,73 @@ extension LupedWatchDiagnostics {
             }
             return (shown, index < fieldDescriptions.count ? fieldDescriptions[index] : "unknown")
         }
-        return LupedPayload.decodeTable(fields)
+        let buzzes = (values.count > buzzesIndex ? values[buzzesIndex] as? [[NSNumber]] : nil) ?? []
+        return ([LupedPayload.decodeTable(fields)] + buzzes.map(describeBuzz)).joined(separator: "\n")
     }
+
+    /// Checks the alert fires the watch acknowledged against its buzz records.
+    /// A fire with no record means the watchface never tried to buzz; one with
+    /// a record that still went unfelt points at PebbleOS (see `describeBuzz`).
+    /// Only fires since the diagnostics window started, older than 10 s, and
+    /// (when the 5-record list is full) not older than its oldest record count.
+    static func buzzCheck(json: String, delivered: [LupedDeliveredAlert], receivedAt: Date) -> (missing: [LupedDeliveredAlert], message: String)? {
+        guard let data = json.data(using: .utf8),
+              let values = try? JSONSerialization.jsonObject(with: data) as? [Any],
+              (values.first as? NSNumber)?.intValue == 2,
+              values.count > buzzesIndex,
+              let buzzes = values[buzzesIndex] as? [[NSNumber]]
+        else {
+            return nil
+        }
+        var since = ((values[3] as? NSNumber)?.doubleValue).map { Date(timeIntervalSince1970: $0 / 1_000) } ?? .distantPast
+        if buzzes.count >= 5, let oldest = buzzes.first, oldest.count > 2 {
+            since = max(since, Date(timeIntervalSince1970: oldest[2].doubleValue / 1_000 - 2))
+        }
+        let checked = delivered.filter { $0.deliveredAt >= since && $0.deliveredAt <= receivedAt.addingTimeInterval(-10) }
+        guard !checked.isEmpty else {
+            return nil
+        }
+        let buzzed = Set(buzzes.compactMap { $0.first?.intValue })
+        let missing = checked.filter { !buzzed.contains($0.event) }
+        guard !missing.isEmpty else {
+            return ([], "Buzz check: the watch has a buzz record for each of the \(checked.count) alert fires it acknowledged")
+        }
+        let lines = missing.map { alert in
+            let time = DateFormatter.localizedString(from: alert.deliveredAt, dateStyle: .none, timeStyle: .medium)
+            return "Alert event \(alert.event) (\(LupedPayload.alertLevelNames[alert.level] ?? "level \(alert.level)")), acknowledged at \(time), has no buzz record: the watchface didn't try to buzz. It may have just started, since the first event after a start is only recorded."
+        }
+        return (missing, "Buzz check:\n" + lines.joined(separator: "\n"))
+    }
+
+    /// One line per host-alert buzz. PebbleOS drops an app's vibration while
+    /// another one plays and cancels it when a system pop-up closes, without
+    /// telling the app, so the watch records whether a pop-up covered the
+    /// watchface during the 4.7 s buzz.
+    static func describeBuzz(_ buzz: [NSNumber]) -> String {
+        guard buzz.count >= 4 else {
+            return "Buzz: \(buzz)"
+        }
+        let started = Date(timeIntervalSince1970: buzz[2].doubleValue / 1_000)
+        let time = DateFormatter.localizedString(from: started, dateStyle: .none, timeStyle: .medium)
+        let level = LupedPayload.alertLevelNames[buzz[1].intValue] ?? "level \(buzz[1])"
+        let outcome: String
+        switch buzz[3].intValue {
+        case ..<0:
+            outcome = "nothing covered the watchface during the buzz"
+        case 0:
+            outcome = "a pop-up already covered the watchface, so PebbleOS may have dropped the buzz"
+        case let ms:
+            outcome = "a pop-up covered the watchface \(ms) ms in, so PebbleOS may have cut the buzz short"
+        }
+        return "Buzz for alert event \(buzz[0]) (\(level)) at \(time): \(outcome)"
+    }
+}
+
+/// An alert fire the watch acknowledged: a changed alert event at a level above 0.
+struct LupedDeliveredAlert: Equatable {
+    let event: Int
+    let level: Int
+    let deliveredAt: Date
 }
 
 /// The most recent watch communication events, newest last, kept in memory.

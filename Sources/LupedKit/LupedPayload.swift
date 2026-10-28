@@ -56,6 +56,10 @@ public struct LupedPayload: Equatable {
     /// Number of history readings sent (index 4), for diagnostics. `0` in
     /// full-screen mode, which has no graph.
     let readingCount: Int
+    /// The host alert level (index 8) and alert event (index 9) sent, so the
+    /// transport can check the watch's buzz records against them.
+    let hostAlertLevel: Int
+    let alertEvent: Int
     /// One line for the communication log, e.g. "7.0 mmol/L ↓ -0.2 at 11:15:02".
     let logSummary: String
     /// Aligned label/value lines under the summary, ending with the raw `DATA` JSON.
@@ -121,6 +125,8 @@ public struct LupedPayload: Equatable {
         self.data = data
         self.latestDate = latest.date
         self.readingCount = history.count
+        self.hostAlertLevel = hostAlertLevel
+        self.alertEvent = alertEvent
 
         let time = DateFormatter.localizedString(from: latest.date, dateStyle: .none, timeStyle: .medium)
         let roundedDelta = Self.rounded(delta, for: unit)
@@ -173,7 +179,7 @@ public struct LupedPayload: Equatable {
     }
 
     /// Names for the host-issued alert level carried in `DATA` index 8.
-    private static let alertLevelNames: [Int: String] = [0: "none", 1: "info", 2: "warning", 3: "critical"]
+    static let alertLevelNames: [Int: String] = [0: "none", 1: "info", 2: "warning", 3: "critical"]
 
     /// Rounds to the watchface's display precision: one decimal for mmol/L, whole mg/dL.
     ///
