@@ -251,7 +251,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             alarmStatus = status
             record(.info, status)
         }
-        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: settings.statusLine.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(settings.statusLine, therapy: snapshot.therapy, unit: snapshot.unit)) else {
+        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: settings.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(settings.statusLine, therapy: snapshot.therapy, unit: snapshot.unit), settings: settings) else {
             record(.info, String(format: "No usable CGM readings among %ld stored samples; nothing to send", snapshot.storedSampleCount))
             return
         }
@@ -276,7 +276,10 @@ public final class LupedTransport: PebbleTransportDelegate {
             record(.info, "Watch alarms \(settings.alarmsEnabled ? "enabled" : "disabled")")
         }
         if settings.statusLine != old.statusLine {
-            record(.info, "Watch status line: \(settings.statusLine.rawValue)")
+            record(.info, "Watch status line: \(settings.statusLine.displayName)")
+        }
+        if settings.showsLoopRing != old.showsLoopRing {
+            record(.info, "Watch loop ring \(settings.showsLoopRing ? "on" : "off: the watch won't show when the host last looped")")
         }
         if settings.fullScreen != old.fullScreen {
             record(.info, "Watch display: \(settings.fullScreen ? "full-screen ring" : "ring with graph")")

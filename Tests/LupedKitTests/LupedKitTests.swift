@@ -109,11 +109,11 @@ final class LupedPayloadTests: XCTestCase {
             "7: 1 full-screen ring",
             "8: 0 host-issued alert level: none",
             "9: 0 alert event (changes each time the host fires an alert)",
-            "10: null insulin on board (U)",
-            "11: null carbs on board (g)",
-            "12: null last loop completed (milliseconds since Unix epoch)",
-            "13: null closed or open loop (not sent by the host)",
-            "14: null status line: none",
+            "10: null insulin on board (not provided by the host)",
+            "11: null carbs on board (not provided by the host)",
+            "12: null last loop completed (not provided by the host)",
+            "13: null closed or open loop (not provided by the host)",
+            "14: null status line: IOB and COB, formatted on the watch",
         ])
     }
 
@@ -332,43 +332,92 @@ final class LupedWatchDiagnosticsRestoreTests: XCTestCase {
 
 final class LupedStatusLineChoiceTests: XCTestCase {
     private let status = LupedLoopStatus(insulinOnBoard: 1.25, carbsOnBoard: 12, lastLoopCompleted: Date(timeIntervalSince1970: 1_800_000_000), isClosedLoop: true)
+    private let readings = [LupedReading(date: Date(timeIntervalSince1970: 1_800_000_000), milligramsPerDeciliter: 110, trend: nil)]
 
-    // None: an empty strip and no loop ring, so nothing is requested or sent.
-    func testNoneSendsNothing() {
-        XCTAssertFalse(LupedStatusLine.none.needsLoopStatus)
-        XCTAssertFalse(LupedStatusLine.none.needsTherapy)
-        XCTAssertNil(LupedStatusLine.none.loopStatusToSend(status))
+    private func settings(_ line: LupedStatusLine, loopRing: Bool = true) -> LupedSettings {
+        LupedSettings(isEnabled: true, statusLine: line, loopRing: loopRing)
+    }
+
+    private func decoded(_ settings: LupedSettings, loopStatus: LupedLoopStatus?) throws -> [String] {
+        let payload = try XCTUnwrap(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, loopStatus: settings.loopStatusToSend(loopStatus), statusLine: nil, settings: settings))
+        return payload.logDetails.components(separatedBy: "\n").dropFirst().dropLast().map { $0.split(separator: " ").joined(separator: " ") }
+    }
+
+    // None with the loop ring off: nothing requested or sent.
+    func testNoneWithoutLoopRingSendsNothing() {
+        let off = settings(.none, loopRing: false)
+        XCTAssertFalse(off.needsLoopStatus)
+        XCTAssertFalse(off.needsTherapy)
+        XCTAssertFalse(off.showsLoopRing)
+        XCTAssertNil(off.loopStatusToSend(status))
         XCTAssertNil(LupedPayload.statusLine(.none, therapy: LupedTherapy(eventualGlucose: 110), unit: .milligramsPerDeciliter))
     }
 
-    func testIOBAndCOBSendsTheWholeLoopStatus() {
-        XCTAssertTrue(LupedStatusLine.iobAndCob.needsLoopStatus)
-        XCTAssertFalse(LupedStatusLine.iobAndCob.needsTherapy)
-        XCTAssertEqual(LupedStatusLine.iobAndCob.loopStatusToSend(status), status)
+    // None keeps the loop ring by default, so the watch still shows when Loop last ran.
+    func testNoneKeepsTheLoopRingByDefault() {
+        let none = settings(.none)
+        XCTAssertTrue(none.showsLoopRing)
+        XCTAssertTrue(none.needsLoopStatus)
+        let sent = none.loopStatusToSend(status)
+        XCTAssertNil(sent?.insulinOnBoard)
+        XCTAssertNil(sent?.carbsOnBoard)
+        XCTAssertEqual(sent?.lastLoopCompleted, status.lastLoopCompleted)
+        XCTAssertEqual(sent?.isClosedLoop, true)
     }
 
-    // Other lines keep the loop's age and mode (loop ring, stale dimming) but not IOB/COB.
-    func testTherapyLinesDropIOBAndCOB() {
-        for choice in [LupedStatusLine.tempBasal, .eventualGlucose, .sensitivityAndTarget] {
-            XCTAssertTrue(choice.needsTherapy, "\(choice)")
-            let sent = choice.loopStatusToSend(status)
-            XCTAssertNil(sent?.insulinOnBoard)
-            XCTAssertNil(sent?.carbsOnBoard)
-            XCTAssertEqual(sent?.lastLoopCompleted, status.lastLoopCompleted)
-            XCTAssertEqual(sent?.isClosedLoop, true)
+    // A shown line always needs the loop's age (stale dimming), so the ring stays on.
+    func testAShownLineForcesTheLoopRing() {
+        for line in [LupedStatusLine.iobAndCob, .tempBasal, .eventualGlucose, .sensitivityAndTarget] {
+            XCTAssertTrue(settings(line, loopRing: false).showsLoopRing, "\(line)")
+            XCTAssertNotNil(settings(line, loopRing: false).loopStatusToSend(status)?.lastLoopCompleted, "\(line)")
         }
     }
 
-    func testNonePayloadHasNullStatusFieldsAndSaysSo() throws {
-        let readings = [LupedReading(date: Date(timeIntervalSince1970: 1_800_000_000), milligramsPerDeciliter: 110, trend: nil)]
-        let payload = try XCTUnwrap(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, loopStatus: LupedStatusLine.none.loopStatusToSend(status), statusLine: nil))
-        XCTAssertTrue(payload.data.hasSuffix(",null,null,null,null,null]"), payload.data)
-        let last = try XCTUnwrap(payload.logDetails.components(separatedBy: "\n").dropLast().last)
-        XCTAssertTrue(last.hasSuffix("status line: none"), last)
+    func testIOBAndCOBSendsTheWholeLoopStatus() {
+        XCTAssertEqual(settings(.iobAndCob).loopStatusToSend(status), status)
+        XCTAssertFalse(settings(.iobAndCob).needsTherapy)
     }
 
-    func testStoredNoneRoundTrips() {
-        let settings = LupedSettings(isEnabled: true, statusLine: LupedStatusLine.none)
-        XCTAssertEqual(LupedSettings(rawValue: settings.rawValue).statusLine, LupedStatusLine.none)
+    func testTherapyLinesDropIOBAndCOB() {
+        for line in [LupedStatusLine.tempBasal, .eventualGlucose, .sensitivityAndTarget] {
+            XCTAssertTrue(settings(line).needsTherapy, "\(line)")
+            let sent = settings(line).loopStatusToSend(status)
+            XCTAssertNil(sent?.insulinOnBoard)
+            XCTAssertNil(sent?.carbsOnBoard)
+            XCTAssertEqual(sent?.lastLoopCompleted, status.lastLoopCompleted)
+        }
+    }
+
+    // The log says why each null field is null.
+    func testDecodeExplainsNullFields() throws {
+        let off = try decoded(settings(.none, loopRing: false), loopStatus: status)
+        XCTAssertEqual(Array(off.suffix(5)), [
+            "10: null insulin on board (not sent: Status Line is None)",
+            "11: null carbs on board (not sent: Status Line is None)",
+            "12: null last loop completed (not sent: Status Line is None and Loop Ring is off)",
+            "13: null closed or open loop (not sent: Status Line is None and Loop Ring is off)",
+            "14: null status line: none (Status Line is None)",
+        ])
+        let ring = try decoded(settings(.none), loopStatus: status)
+        XCTAssertEqual(ring[12], "12: 1800000000000 last loop completed (milliseconds since Unix epoch)")
+        let missing = try decoded(settings(.iobAndCob), loopStatus: LupedLoopStatus(insulinOnBoard: 1, carbsOnBoard: nil, lastLoopCompleted: nil, isClosedLoop: true))
+        XCTAssertEqual(missing[11], "11: null carbs on board (not provided by the host)")
+        XCTAssertEqual(missing[12], "12: null last loop completed (not provided by the host)")
+        let empty = try decoded(settings(.eventualGlucose), loopStatus: status)
+        XCTAssertEqual(empty[14], "14: null status line: empty (the host provided no Eventual Glucose value)")
+    }
+
+    func testNonePayloadWithoutLoopRingHasNullStatusFields() throws {
+        let off = settings(.none, loopRing: false)
+        let payload = try XCTUnwrap(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, loopStatus: off.loopStatusToSend(status), statusLine: nil, settings: off))
+        XCTAssertTrue(payload.data.hasSuffix(",null,null,null,null,null]"), payload.data)
+    }
+
+    func testStoredSettingsRoundTrip() {
+        let stored = settings(.none, loopRing: false)
+        let restored = LupedSettings(rawValue: stored.rawValue)
+        XCTAssertEqual(restored.statusLine, LupedStatusLine.none)
+        XCTAssertFalse(restored.loopRing)
+        XCTAssertTrue(LupedSettings(rawValue: [:]).loopRing, "the loop ring defaults to on")
     }
 }

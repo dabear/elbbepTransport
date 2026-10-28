@@ -20,19 +20,47 @@ public struct LupedSettings: Equatable {
     public var fullScreen: Bool
     /// What the left of the watch's status strip shows.
     public var statusLine: LupedStatusLine
+    /// The watch's loop ring (minutes since the last loop, closed or open) while
+    /// the status line is None. Every shown line needs the loop's age, which dims
+    /// the line when the loop is stale, so the ring is always on then.
+    public var loopRing: Bool
 
     public init(
         isEnabled: Bool = false,
         watchfaceUUID: UUID = LupedSettings.defaultWatchfaceUUID,
         alarmsEnabled: Bool = true,
         fullScreen: Bool = false,
-        statusLine: LupedStatusLine = .iobAndCob
+        statusLine: LupedStatusLine = .iobAndCob,
+        loopRing: Bool = true
     ) {
         self.isEnabled = isEnabled
         self.watchfaceUUID = watchfaceUUID
         self.alarmsEnabled = alarmsEnabled
         self.fullScreen = fullScreen
         self.statusLine = statusLine
+        self.loopRing = loopRing
+    }
+
+    /// Whether the watch shows the loop ring: always with a status line, and with
+    /// None only while `loopRing` is on.
+    public var showsLoopRing: Bool { statusLine != .none || loopRing }
+
+    /// Whether the watch needs the loop status (`DATA` 10–13) from the host.
+    public var needsLoopStatus: Bool { showsLoopRing }
+
+    /// Whether the status line is formatted from the host's therapy values.
+    public var needsTherapy: Bool { statusLine.needsTherapy }
+
+    /// The part of `status` the watch gets: the loop's age and mode (12–13) while
+    /// the loop ring shows, and IOB and COB (10–11) only for the IOB & COB line,
+    /// the only line the watch formats from them. Everything else is `null`.
+    public func loopStatusToSend(_ status: LupedLoopStatus?) -> LupedLoopStatus? {
+        guard needsLoopStatus, var status else { return nil }
+        if statusLine != .iobAndCob {
+            status.insulinOnBoard = nil
+            status.carbsOnBoard = nil
+        }
+        return status
     }
 
     /// Restores settings from `rawValue`, using the defaults for missing keys.
@@ -43,7 +71,8 @@ public struct LupedSettings: Equatable {
             watchfaceUUID: (rawValue[UserDefaults.lupedPebbleWatchfaceUUIDKey] as? String).flatMap(UUID.init(uuidString:)) ?? defaults.watchfaceUUID,
             alarmsEnabled: rawValue[UserDefaults.lupedPebbleAlarmsEnabledKey] as? Bool ?? defaults.alarmsEnabled,
             fullScreen: rawValue[UserDefaults.lupedPebbleFullScreenKey] as? Bool ?? defaults.fullScreen,
-            statusLine: (rawValue[UserDefaults.lupedPebbleStatusLineKey] as? String).flatMap(LupedStatusLine.init(rawValue:)) ?? defaults.statusLine
+            statusLine: (rawValue[UserDefaults.lupedPebbleStatusLineKey] as? String).flatMap(LupedStatusLine.init(rawValue:)) ?? defaults.statusLine,
+            loopRing: rawValue[UserDefaults.lupedPebbleLoopRingKey] as? Bool ?? defaults.loopRing
         )
     }
 
@@ -54,6 +83,7 @@ public struct LupedSettings: Equatable {
             UserDefaults.lupedPebbleAlarmsEnabledKey: alarmsEnabled,
             UserDefaults.lupedPebbleFullScreenKey: fullScreen,
             UserDefaults.lupedPebbleStatusLineKey: statusLine.rawValue,
+            UserDefaults.lupedPebbleLoopRingKey: loopRing,
         ]
     }
 }
@@ -63,7 +93,8 @@ public struct LupedSettings: Equatable {
 /// formats from the host's therapy values in the display unit.
 ///
 /// Only what the choice needs goes to the watch; the rest of `DATA` 10–14 is
-/// `null`, and a host needn't supply it (see `needsLoopStatus`, `needsTherapy`).
+/// `null`, and a host needn't supply it (see `LupedSettings.needsLoopStatus` and
+/// `needsTherapy`, which also account for the loop ring).
 public enum LupedStatusLine: String, CaseIterable, Equatable {
     /// An empty strip and no loop ring: `DATA` 10–14 are all `null`.
     case none
@@ -72,10 +103,16 @@ public enum LupedStatusLine: String, CaseIterable, Equatable {
     case eventualGlucose
     case sensitivityAndTarget
 
-    /// Whether the watch needs the loop status (`DATA` 10–13). Every shown line
-    /// needs the loop's age and mode: they drive the loop ring and dim the strip
-    /// when the loop is stale.
-    public var needsLoopStatus: Bool { self != .none }
+    /// The choice's name in the communication log.
+    public var displayName: String {
+        switch self {
+        case .none: "None"
+        case .iobAndCob: "IOB & COB"
+        case .tempBasal: "Temp Basal"
+        case .eventualGlucose: "Eventual Glucose"
+        case .sensitivityAndTarget: "ISF & Target"
+        }
+    }
 
     /// Whether the line is formatted from the host's therapy values.
     public var needsTherapy: Bool {
@@ -83,18 +120,6 @@ public enum LupedStatusLine: String, CaseIterable, Equatable {
         case .tempBasal, .eventualGlucose, .sensitivityAndTarget: true
         case .none, .iobAndCob: false
         }
-    }
-
-    /// The part of `status` the watch gets for this choice: IOB and COB only for
-    /// IOB & COB (the only line the watch formats from them), the loop's age and
-    /// mode for every shown line, and nothing for `.none`.
-    public func loopStatusToSend(_ status: LupedLoopStatus?) -> LupedLoopStatus? {
-        guard needsLoopStatus, var status else { return nil }
-        if self != .iobAndCob {
-            status.insulinOnBoard = nil
-            status.carbsOnBoard = nil
-        }
-        return status
     }
 }
 
@@ -106,6 +131,7 @@ public extension UserDefaults {
     static let lupedPebbleAlarmsEnabledKey = "lupedPebbleAlarmsEnabled"
     static let lupedPebbleFullScreenKey = "lupedPebbleFullScreen"
     static let lupedPebbleStatusLineKey = "lupedPebbleStatusLine"
+    static let lupedPebbleLoopRingKey = "lupedPebbleLoopRing"
     static let lupedDefaultWatchfaceUUID = LupedSettings.defaultWatchfaceUUID.uuidString.lowercased()
 
     /// The Luped settings stored in these defaults.

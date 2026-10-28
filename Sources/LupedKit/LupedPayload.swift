@@ -92,6 +92,27 @@ public struct LupedPayload: Equatable {
         }
     }
 
+    /// Why a loop status field is `null`, for the log decode.
+    static func notSent(insulinAndCarbs: Bool, settings: LupedSettings) -> String {
+        if insulinAndCarbs, settings.statusLine != .iobAndCob {
+            return " (not sent: Status Line is \(settings.statusLine.displayName))"
+        }
+        if !insulinAndCarbs, !settings.needsLoopStatus {
+            return " (not sent: Status Line is None and Loop Ring is off)"
+        }
+        return " (not provided by the host)"
+    }
+
+    /// The log description of `DATA` index 14.
+    static func statusLineDescription(_ line: String?, settings: LupedSettings) -> String {
+        if line != nil { return "status line" }
+        switch settings.statusLine {
+        case .none: return "status line: none (Status Line is None)"
+        case .iobAndCob: return "status line: IOB and COB, formatted on the watch"
+        default: return "status line: empty (the host provided no \(settings.statusLine.displayName) value)"
+        }
+    }
+
     /// The watch-alarm line for the communication log. The host issues the alerts
     /// (index 8) and applies its own mute, so the only control on the watch is the
     /// user's Watch Alarms switch.
@@ -102,7 +123,10 @@ public struct LupedPayload: Equatable {
     /// `alertEvent` changes each time the host fires a glucose alert (the first
     /// fire and every repeat), so the watch can buzz on a repeat even though the
     /// alert level stays the same.
-    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil) {
+    /// `settings` lets the log decode say why a loop status or status line field is
+    /// `null`: the user's Status Line and Loop Ring choice, or a value the host
+    /// didn't provide.
+    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil, settings: LupedSettings = LupedSettings()) {
         let readings = Self.graphReadings(readings, limit: 12)
         guard let latest = readings.last else {
             return nil
@@ -136,12 +160,12 @@ public struct LupedPayload: Equatable {
             (fullScreen ? 1 : 0, fullScreen ? "full-screen ring" : "ring with graph"),
             (hostAlertLevel, "host-issued alert level: \(Self.alertLevelNames[hostAlertLevel] ?? "unknown")" + (hostAlertReason.map { " (\($0))" } ?? "")),
             (alertEvent, "alert event (changes each time the host fires an alert)"),
-            // Loop status for the watch's IOB/COB and loop ring; null when unknown.
-            (loopStatus?.insulinOnBoard.map { Self.rounded($0, scale: 2) } ?? NSNull(), "insulin on board (U)"),
-            (loopStatus?.carbsOnBoard.map { Self.rounded($0, scale: 0) } ?? NSNull(), "carbs on board (g)"),
-            (loopStatus?.lastLoopCompleted.map { Int64($0.timeIntervalSince1970 * 1_000) } ?? NSNull(), "last loop completed (milliseconds since Unix epoch)"),
-            (loopStatus?.isClosedLoop.map { $0 ? 1 : 0 } ?? NSNull(), loopStatus?.isClosedLoop.map { $0 ? "closed loop" : "open loop" } ?? "closed or open loop (not sent by the host)"),
-            (statusLine ?? NSNull(), statusLine != nil ? "status line" : loopStatus?.insulinOnBoard == nil && loopStatus?.carbsOnBoard == nil ? "status line: none" : "status line: IOB and COB, formatted on the watch"),
+            // Loop status for the watch's IOB/COB and loop ring; null when not sent.
+            (loopStatus?.insulinOnBoard.map { Self.rounded($0, scale: 2) } ?? NSNull(), loopStatus?.insulinOnBoard != nil ? "insulin on board (U)" : "insulin on board" + Self.notSent(insulinAndCarbs: true, settings: settings)),
+            (loopStatus?.carbsOnBoard.map { Self.rounded($0, scale: 0) } ?? NSNull(), loopStatus?.carbsOnBoard != nil ? "carbs on board (g)" : "carbs on board" + Self.notSent(insulinAndCarbs: true, settings: settings)),
+            (loopStatus?.lastLoopCompleted.map { Int64($0.timeIntervalSince1970 * 1_000) } ?? NSNull(), loopStatus?.lastLoopCompleted != nil ? "last loop completed (milliseconds since Unix epoch)" : "last loop completed" + Self.notSent(insulinAndCarbs: false, settings: settings)),
+            (loopStatus?.isClosedLoop.map { $0 ? 1 : 0 } ?? NSNull(), loopStatus?.isClosedLoop.map { $0 ? "closed loop" : "open loop" } ?? "closed or open loop" + Self.notSent(insulinAndCarbs: false, settings: settings)),
+            (statusLine ?? NSNull(), Self.statusLineDescription(statusLine, settings: settings)),
         ]
         let message = fields.map(\.value)
 
