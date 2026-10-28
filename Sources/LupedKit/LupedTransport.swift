@@ -342,8 +342,8 @@ public final class LupedTransport: PebbleTransportDelegate {
         let reply = acknowledged ? "ACK" : "NACK"
         if let pending = inflightCommand, pending.transactionID == transactionID {
             inflightCommand = nil
-            record(.fromWatch, "#\(transactionID) \(reply) · COMMAND \(pending.command)\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
-            if pending.command == "diagnostics" {
+            record(.fromWatch, "#\(transactionID) \(reply) · \(pending.command)\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
+            if pending.command == "COMMAND diagnostics" {
                 if !acknowledged {
                     status.watchInfoNote = NSLocalizedString("The watch rejected the request; the watchface is probably not running.", bundle: .lupedKit, comment: "Pebble watch info note: request rejected")
                 } else {
@@ -498,7 +498,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         let transactionID = transport.makeTransactionID()
         if diagnosticsRequested {
             diagnosticsRequested = false
-            inflightCommand = (transactionID, "diagnostics")
+            inflightCommand = (transactionID, "COMMAND diagnostics")
             record(.toWatch, "#\(transactionID) COMMAND diagnostics")
             transport.push(transactionID: transactionID, tuples: [(LupedMessageKey.command, .cString("diagnostics"))])
         } else {
