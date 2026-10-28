@@ -178,6 +178,13 @@ final class LupedDeliveryTests: XCTestCase {
         XCTAssertEqual(LupedDelivery.unchangedData("[1,110]", delivered: "[1,100]", inFlight: "[1,110]"), .inFlight)
     }
 
+    // A RESULT that was in flight when the watchface restarted goes out again;
+    // a diagnostics request is dropped.
+    func testOnlyResultsAreResentAfterAWatchfaceRestart() {
+        XCTAssertEqual(LupedDelivery.resultToResend(afterRestart: "RESULT carbs:ok"), "carbs:ok")
+        XCTAssertNil(LupedDelivery.resultToResend(afterRestart: "COMMAND diagnostics"))
+    }
+
     func testAChangedAlertLevelIsSent() {
         XCTAssertNil(LupedDelivery.unchangedData("[1,110,0,3,[],0,1,0,2]", delivered: "[1,110,0,3,[],0,1,0,0]", inFlight: nil))
     }

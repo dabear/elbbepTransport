@@ -20,6 +20,12 @@ enum LupedDelivery {
 
     enum Unchanged: Equatable { case delivered, inFlight }
 
+    /// The RESULT to send again when the watchface restarted while it was in
+    /// flight; `nil` for other commands (diagnostics), which are just dropped.
+    static func resultToResend(afterRestart inflightCommand: String) -> String? {
+        inflightCommand.hasPrefix("RESULT ") ? String(inflightCommand.dropFirst("RESULT ".count)) : nil
+    }
+
     /// Whether a host refresh produced `DATA` the watch already has (acknowledged
     /// in this session) or is about to get (in flight), so it needn't be sent.
     /// Watch refresh requests, new sessions and Send Now always send.
@@ -304,6 +310,9 @@ public final class LupedTransport: PebbleTransportDelegate {
             awaitingWatchfaceRestart = nil
             record(.info, "Watchface restarted; it can reply again")
         }
+        if tuples[PebbleAppMessage.alloyReadyKey] != nil {
+            dropMessagesToPreviousWatchface()
+        }
         let hex = PebbleTransport.hex(message.dropFirst(18))
         if let diagnostics = tuples[LupedMessageKey.diagnostics]?.string {
             record(.fromWatch, "Watch diagnostics\n" + LupedWatchDiagnostics.logDecode(json: diagnostics))
@@ -482,6 +491,27 @@ public final class LupedTransport: PebbleTransportDelegate {
             self.diagnosticsRequested = false
             self.record(.error, "The watchface did not start within 15 s")
             self.status.watchInfoNote = NSLocalizedString("The watchface did not restart. Open it on the watch, then try again.", bundle: .lupedKit, comment: "Pebble watch info note: restart failed")
+        }
+    }
+
+    /// Only a freshly started watchface sends the ready handshake, so anything
+    /// still awaiting an ACK went to the previous instance and will never be
+    /// answered. Drop it so the handshake is answered at once instead of after
+    /// the ACK timeout and a retry. A RESULT goes out again to the new watchface;
+    /// a diagnostics request is dropped (the watch reports on its own).
+    private func dropMessagesToPreviousWatchface() {
+        if let push = inflightPush {
+            record(.info, "#\(push.transactionID) dropped: the watchface restarted before acknowledging it")
+            inflightPush = nil
+            pushAckTimeout?.cancel()
+            pushAckTimeout = nil
+        }
+        if let pending = inflightCommand {
+            record(.info, "#\(pending.transactionID) \(pending.command) dropped: the watchface restarted before acknowledging it")
+            if let result = LupedDelivery.resultToResend(afterRestart: pending.command) {
+                pendingResults.insert(result, at: 0)
+            }
+            inflightCommand = nil
         }
     }
 
