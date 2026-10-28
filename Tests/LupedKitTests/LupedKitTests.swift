@@ -19,9 +19,9 @@ final class LupedPayloadTests: XCTestCase {
         let timestamp = Int64(start.addingTimeInterval(300).timeIntervalSince1970 * 1_000)
         // Minimal Luped protocol: [version, glucose, delta, trend, history,
         // unitsFlag, timestamp, fullScreen, hostAlertLevel, alertEvent, iob, cob,
-        // lastLoop, closedLoop]. No thresholds travel; the zeros are the alert
-        // level and event, and the loop status is null when the host sends none.
-        XCTAssertEqual(payload.data, "[1,110,10,4,[100,110],0,\(timestamp),0,0,0,null,null,null,null]")
+        // lastLoop, closedLoop, statusLine]. No thresholds travel; the zeros are
+        // the alert level and event, and the rest is null when the host sends none.
+        XCTAssertEqual(payload.data, "[1,110,10,4,[100,110],0,\(timestamp),0,0,0,null,null,null,null,null]")
         XCTAssertEqual(payload.readingCount, 2)
     }
 
@@ -33,14 +33,30 @@ final class LupedPayloadTests: XCTestCase {
         let lastLoop = start.addingTimeInterval(240)
         let status = LupedLoopStatus(insulinOnBoard: 1.234, carbsOnBoard: 12.6, lastLoopCompleted: lastLoop, isClosedLoop: false)
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, loopStatus: status))
-        XCTAssertTrue(payload.data.hasSuffix(",1.23,13,\(Int64(lastLoop.timeIntervalSince1970 * 1_000)),0]"), payload.data)
+        XCTAssertTrue(payload.data.hasSuffix(",1.23,13,\(Int64(lastLoop.timeIntervalSince1970 * 1_000)),0,null]"), payload.data)
         XCTAssertTrue(payload.logDetails.contains("open loop"), payload.logDetails)
+    }
+
+    // The status line is formatted on the phone in the display unit; IOB and
+    // COB are left to the watch (null), as is a choice the host has no data for.
+    func testStatusLineChoices() throws {
+        let therapy = LupedTherapy(tempBasalRate: 0.45, scheduledBasalRate: 0.8, insulinSensitivity: 45, eventualGlucose: 110, correctionRange: 100...110)
+        XCTAssertNil(LupedPayload.statusLine(.iobAndCob, therapy: therapy, unit: .milligramsPerDeciliter))
+        XCTAssertEqual(LupedPayload.statusLine(.tempBasal, therapy: therapy, unit: .milligramsPerDeciliter), "Temp 0.45 U/h")
+        XCTAssertEqual(LupedPayload.statusLine(.tempBasal, therapy: LupedTherapy(scheduledBasalRate: 0.8), unit: .milligramsPerDeciliter), "Basal 0.80 U/h")
+        XCTAssertEqual(LupedPayload.statusLine(.eventualGlucose, therapy: therapy, unit: .millimolesPerLiter), "Eventual 6.1")
+        XCTAssertEqual(LupedPayload.statusLine(.sensitivityAndTarget, therapy: therapy, unit: .milligramsPerDeciliter), "ISF 45 · 100–110")
+        XCTAssertEqual(LupedPayload.statusLine(.sensitivityAndTarget, therapy: therapy, unit: .millimolesPerLiter), "ISF 2.5 · 5.6–6.1")
+        XCTAssertNil(LupedPayload.statusLine(.eventualGlucose, therapy: nil, unit: .milligramsPerDeciliter))
+
+        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, statusLine: "Temp 0.45 U/h"))
+        XCTAssertTrue(payload.data.hasSuffix(",\"Temp 0.45 U/h\"]"), payload.data)
     }
 
     func testFullScreenSendsNoHistory() throws {
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, fullScreen: true))
         let timestamp = Int64(start.addingTimeInterval(300).timeIntervalSince1970 * 1_000)
-        XCTAssertEqual(payload.data, "[1,110,10,4,[],0,\(timestamp),1,0,0,null,null,null,null]")
+        XCTAssertEqual(payload.data, "[1,110,10,4,[],0,\(timestamp),1,0,0,null,null,null,null,null]")
         XCTAssertEqual(payload.readingCount, 0)
     }
 
@@ -57,7 +73,7 @@ final class LupedPayloadTests: XCTestCase {
     // then the loop status (indexes 10-13).
     func testAlertLevelAndEventAreIndexes8And9() throws {
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 2, alertEvent: 417))
-        XCTAssertTrue(payload.data.hasSuffix(",2,417,null,null,null,null]"), payload.data)
+        XCTAssertTrue(payload.data.hasSuffix(",2,417,null,null,null,null,null]"), payload.data)
     }
 
     // A repeat of an active alert keeps the level but changes the event, so the
@@ -95,6 +111,7 @@ final class LupedPayloadTests: XCTestCase {
             "11: null carbs on board (g)",
             "12: null last loop completed (milliseconds since Unix epoch)",
             "13: null closed or open loop (not sent by the host)",
+            "14: null status line: IOB and COB, formatted on the watch",
         ])
     }
 
@@ -170,6 +187,13 @@ final class LupedSettingsTests: XCTestCase {
     func testRawValueRoundTrips() {
         let settings = LupedSettings(isEnabled: true, watchfaceUUID: UUID(), alarmsEnabled: false, fullScreen: true)
         XCTAssertEqual(LupedSettings(rawValue: settings.rawValue), settings)
+    }
+
+    // The status line choice survives a round trip and defaults to IOB and COB.
+    func testStatusLineRoundTrips() {
+        XCTAssertEqual(LupedSettings().statusLine, .iobAndCob)
+        XCTAssertEqual(LupedSettings(rawValue: LupedSettings(statusLine: .eventualGlucose).rawValue).statusLine, .eventualGlucose)
+        XCTAssertEqual(LupedSettings(rawValue: ["lupedPebbleStatusLine": "unknown"]).statusLine, .iobAndCob)
     }
 
     func testMissingKeysUseDefaults() {

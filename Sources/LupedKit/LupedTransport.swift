@@ -57,8 +57,11 @@ public struct LupedSnapshot {
     /// What the host's loop is doing, for the watch's IOB/COB and loop ring;
     /// `nil` when the host doesn't provide it.
     public var loopStatus: LupedLoopStatus?
+    /// The host's therapy values for a phone-formatted status line; `nil`
+    /// when the host doesn't provide them.
+    public var therapy: LupedTherapy?
 
-    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil) {
+    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, therapy: LupedTherapy? = nil) {
         self.readings = readings
         self.storedSampleCount = storedSampleCount
         self.unit = unit
@@ -66,6 +69,25 @@ public struct LupedSnapshot {
         self.hostAlertReason = hostAlertReason
         self.alertEvent = alertEvent
         self.loopStatus = loopStatus
+        self.therapy = therapy
+    }
+}
+
+/// The host's therapy values in mg/dL (glucose, ISF per U) and U/h (basal).
+/// Any value may be unknown.
+public struct LupedTherapy: Equatable {
+    public var tempBasalRate: Double?
+    public var scheduledBasalRate: Double?
+    public var insulinSensitivity: Double?
+    public var eventualGlucose: Double?
+    public var correctionRange: ClosedRange<Double>?
+
+    public init(tempBasalRate: Double? = nil, scheduledBasalRate: Double? = nil, insulinSensitivity: Double? = nil, eventualGlucose: Double? = nil, correctionRange: ClosedRange<Double>? = nil) {
+        self.tempBasalRate = tempBasalRate
+        self.scheduledBasalRate = scheduledBasalRate
+        self.insulinSensitivity = insulinSensitivity
+        self.eventualGlucose = eventualGlucose
+        self.correctionRange = correctionRange
     }
 }
 
@@ -229,7 +251,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             alarmStatus = status
             record(.info, status)
         }
-        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: snapshot.loopStatus) else {
+        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: snapshot.loopStatus, statusLine: LupedPayload.statusLine(settings.statusLine, therapy: snapshot.therapy, unit: snapshot.unit)) else {
             record(.info, String(format: "No usable CGM readings among %ld stored samples; nothing to send", snapshot.storedSampleCount))
             return
         }
@@ -252,6 +274,9 @@ public final class LupedTransport: PebbleTransportDelegate {
     private func settingsDidChange(from old: LupedSettings) {
         if settings.alarmsEnabled != old.alarmsEnabled {
             record(.info, "Watch alarms \(settings.alarmsEnabled ? "enabled" : "disabled")")
+        }
+        if settings.statusLine != old.statusLine {
+            record(.info, "Watch status line: \(settings.statusLine.rawValue)")
         }
         if settings.fullScreen != old.fullScreen {
             record(.info, "Watch display: \(settings.fullScreen ? "full-screen ring" : "ring with graph")")

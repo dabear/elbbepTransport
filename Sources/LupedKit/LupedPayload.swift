@@ -68,6 +68,29 @@ public struct LupedPayload: Equatable {
     /// Indexed by the protocol's direction value (DoubleDown … DoubleUp).
     private static let trendArrows = ["⇊", "↓", "↘", "→", "↗", "↑", "⇈"]
 
+    /// The status-strip text for `choice`, formatted in the display unit; `nil`
+    /// for IOB and COB (the watch formats those) or when the host sent nothing
+    /// to show.
+    public static func statusLine(_ choice: LupedStatusLine, therapy: LupedTherapy?, unit: LupedUnit) -> String? {
+        let glucose = { (mgdl: Double) -> String in
+            unit == .millimolesPerLiter ? String(format: "%.1f", unit.value(fromMilligramsPerDeciliter: mgdl)) : String(format: "%.0f", mgdl)
+        }
+        switch choice {
+        case .iobAndCob:
+            return nil
+        case .tempBasal:
+            if let temp = therapy?.tempBasalRate { return String(format: "Temp %.2f U/h", temp) }
+            return therapy?.scheduledBasalRate.map { String(format: "Basal %.2f U/h", $0) }
+        case .eventualGlucose:
+            return therapy?.eventualGlucose.map { "Eventual " + glucose($0) }
+        case .sensitivityAndTarget:
+            let isf = therapy?.insulinSensitivity.map { "ISF " + glucose($0) }
+            let target = therapy?.correctionRange.map { glucose($0.lowerBound) + "–" + glucose($0.upperBound) }
+            let parts = [isf, target].compactMap { $0 }
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        }
+    }
+
     /// The watch-alarm line for the communication log. The host issues the alerts
     /// (index 8) and applies its own mute, so the only control on the watch is the
     /// user's Watch Alarms switch.
@@ -78,7 +101,7 @@ public struct LupedPayload: Equatable {
     /// `alertEvent` changes each time the host fires a glucose alert (the first
     /// fire and every repeat), so the watch can buzz on a repeat even though the
     /// alert level stays the same.
-    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil) {
+    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil) {
         let readings = Self.graphReadings(readings, limit: 12)
         guard let latest = readings.last else {
             return nil
@@ -117,11 +140,12 @@ public struct LupedPayload: Equatable {
             (loopStatus?.carbsOnBoard.map { Self.rounded($0, scale: 0) } ?? NSNull(), "carbs on board (g)"),
             (loopStatus?.lastLoopCompleted.map { Int64($0.timeIntervalSince1970 * 1_000) } ?? NSNull(), "last loop completed (milliseconds since Unix epoch)"),
             (loopStatus?.isClosedLoop.map { $0 ? 1 : 0 } ?? NSNull(), loopStatus?.isClosedLoop.map { $0 ? "closed loop" : "open loop" } ?? "closed or open loop (not sent by the host)"),
+            (statusLine ?? NSNull(), statusLine == nil ? "status line: IOB and COB, formatted on the watch" : "status line"),
         ]
         let message = fields.map(\.value)
 
         guard JSONSerialization.isValidJSONObject(message),
-              let encoded = try? JSONSerialization.data(withJSONObject: message),
+              let encoded = try? JSONSerialization.data(withJSONObject: message, options: .withoutEscapingSlashes),
               let data = String(data: encoded, encoding: .utf8)
         else {
             return nil

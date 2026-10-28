@@ -18,17 +18,21 @@ public struct LupedSettings: Equatable {
     public var alarmsEnabled: Bool
     /// Full-screen glucose ring instead of ring and graph.
     public var fullScreen: Bool
+    /// What the left of the watch's status strip shows.
+    public var statusLine: LupedStatusLine
 
     public init(
         isEnabled: Bool = false,
         watchfaceUUID: UUID = LupedSettings.defaultWatchfaceUUID,
         alarmsEnabled: Bool = true,
-        fullScreen: Bool = false
+        fullScreen: Bool = false,
+        statusLine: LupedStatusLine = .iobAndCob
     ) {
         self.isEnabled = isEnabled
         self.watchfaceUUID = watchfaceUUID
         self.alarmsEnabled = alarmsEnabled
         self.fullScreen = fullScreen
+        self.statusLine = statusLine
     }
 
     /// Restores settings from `rawValue`, using the defaults for missing keys.
@@ -38,7 +42,8 @@ public struct LupedSettings: Equatable {
             isEnabled: rawValue[UserDefaults.lupedPebbleEnabledKey] as? Bool ?? defaults.isEnabled,
             watchfaceUUID: (rawValue[UserDefaults.lupedPebbleWatchfaceUUIDKey] as? String).flatMap(UUID.init(uuidString:)) ?? defaults.watchfaceUUID,
             alarmsEnabled: rawValue[UserDefaults.lupedPebbleAlarmsEnabledKey] as? Bool ?? defaults.alarmsEnabled,
-            fullScreen: rawValue[UserDefaults.lupedPebbleFullScreenKey] as? Bool ?? defaults.fullScreen
+            fullScreen: rawValue[UserDefaults.lupedPebbleFullScreenKey] as? Bool ?? defaults.fullScreen,
+            statusLine: (rawValue[UserDefaults.lupedPebbleStatusLineKey] as? String).flatMap(LupedStatusLine.init(rawValue:)) ?? defaults.statusLine
         )
     }
 
@@ -48,8 +53,19 @@ public struct LupedSettings: Equatable {
             UserDefaults.lupedPebbleWatchfaceUUIDKey: watchfaceUUID.uuidString.lowercased(),
             UserDefaults.lupedPebbleAlarmsEnabledKey: alarmsEnabled,
             UserDefaults.lupedPebbleFullScreenKey: fullScreen,
+            UserDefaults.lupedPebbleStatusLineKey: statusLine.rawValue,
         ]
     }
+}
+
+/// What the left of the watch's status strip shows: IOB and COB (the watch
+/// formats them and dims them when the loop is stale), or a line the phone
+/// formats from the host's therapy values in the display unit.
+public enum LupedStatusLine: String, CaseIterable, Equatable {
+    case iobAndCob
+    case tempBasal
+    case eventualGlucose
+    case sensitivityAndTarget
 }
 
 /// Settings → Devices → Pebble kept in `UserDefaults`. The property names equal
@@ -59,6 +75,7 @@ public extension UserDefaults {
     static let lupedPebbleWatchfaceUUIDKey = "lupedPebbleWatchfaceUUID"
     static let lupedPebbleAlarmsEnabledKey = "lupedPebbleAlarmsEnabled"
     static let lupedPebbleFullScreenKey = "lupedPebbleFullScreen"
+    static let lupedPebbleStatusLineKey = "lupedPebbleStatusLine"
     static let lupedDefaultWatchfaceUUID = LupedSettings.defaultWatchfaceUUID.uuidString.lowercased()
 
     /// The Luped settings stored in these defaults.
