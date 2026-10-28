@@ -18,7 +18,7 @@ final class LupedPayloadTests: XCTestCase {
         let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, fullScreen: false))
         let timestamp = Int64(start.addingTimeInterval(300).timeIntervalSince1970 * 1_000)
         // Minimal Luped protocol: [version, glucose, delta, trend, history,
-        // unitsFlag, timestamp, fullScreen, hostAlertLevel, alertEvent, iob, cob,
+        // unitsFlag, timestamp, fullScreen, hostAlertState, alertEvent, iob, cob,
         // lastLoop, closedLoop, statusLine]. No thresholds travel; the zeros are
         // the alert level and event, and the rest is null when the host sends none.
         XCTAssertEqual(payload.data, "[1,110,10,4,[100,110],0,\(timestamp),0,0,0,null,null,null,null,null]")
@@ -65,25 +65,25 @@ final class LupedPayloadTests: XCTestCase {
 
     // The reason only annotates the log; the wire array is unchanged.
     func testHostAlertReasonIsLoggedNotSent() throws {
-        let plain = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 0))
-        let annotated = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 0, hostAlertReason: "no active alerts from Loop"))
+        let plain = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertState: 0))
+        let annotated = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertState: 0, hostAlertReason: "no active alerts from Loop"))
         XCTAssertEqual(annotated.data, plain.data)
-        let levelLine = try XCTUnwrap(annotated.logDetails.components(separatedBy: "\n").first { $0.contains("host-issued alert level") })
-        XCTAssertTrue(levelLine.hasSuffix("host-issued alert level: none (no active alerts from Loop)"), levelLine)
+        let levelLine = try XCTUnwrap(annotated.logDetails.components(separatedBy: "\n").first { $0.contains("host alert:") })
+        XCTAssertTrue(levelLine.hasSuffix("host alert: none (no active alerts from Loop)"), levelLine)
     }
 
     // The host alert level (index 8) is followed by the alert event (index 9),
     // then the loop status (indexes 10-13).
     func testAlertLevelAndEventAreIndexes8And9() throws {
-        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 2, alertEvent: 417))
+        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertState: 2, alertEvent: 417))
         XCTAssertTrue(payload.data.hasSuffix(",2,417,null,null,null,null,null]"), payload.data)
     }
 
     // A repeat of an active alert keeps the level but changes the event, so the
     // DATA differs and is sent (not skipped as already delivered).
     func testRepeatFireChangesData() throws {
-        let first = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 3, alertEvent: 7))
-        let repeated = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertLevel: 3, alertEvent: 8))
+        let first = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertState: 3, alertEvent: 7))
+        let repeated = try XCTUnwrap(LupedPayload(readings: readings([100, 110]), unit: .milligramsPerDeciliter, fullScreen: false, hostAlertState: 3, alertEvent: 8))
         XCTAssertNotEqual(first.data, repeated.data)
         XCTAssertNil(LupedDelivery.unchangedData(repeated.data, delivered: first.data, inFlight: nil))
     }
@@ -108,7 +108,7 @@ final class LupedPayloadTests: XCTestCase {
             "5: 0 mg/dL display",
             "6: \(timestamp) timestamp (milliseconds since Unix epoch)",
             "7: 1 full-screen ring",
-            "8: 0 host-issued alert level: none",
+            "8: 0 host alert: none",
             "9: 0 alert event (changes each time the host fires an alert)",
             "10: null insulin on board (not provided by the host)",
             "11: null carbs on board (not provided by the host)",
@@ -121,7 +121,7 @@ final class LupedPayloadTests: XCTestCase {
     // The communication-log decode must always line up with the raw wire array:
     // one decoded line per element, each tagged with its zero-based wire index.
     func testDecodeAlwaysMatchesWire() throws {
-        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, fullScreen: true, hostAlertLevel: 3))
+        let payload = try XCTUnwrap(LupedPayload(readings: readings([100, 110], trend: .fortyFiveUp), unit: .milligramsPerDeciliter, fullScreen: true, hostAlertState: 3))
         let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(payload.data.utf8)) as? [Any])
         let body = payload.logDetails.components(separatedBy: "\n").dropFirst().dropLast()
         XCTAssertEqual(body.count, wire.count, "decoded line count must equal wire element count")
@@ -282,10 +282,10 @@ final class LupedWatchDiagnosticsLogTests: XCTestCase {
         XCTAssertTrue(lines[lines.count - 1].hasSuffix("the watchface's buzz call failed with an error, so it did not buzz"), lines[lines.count - 1])
         XCTAssertTrue(lines[values.count].hasSuffix("recent host-alert buzzes (listed below)"), lines[values.count])
         XCTAssertTrue(lines[values.count].contains(" 4 "), lines[values.count])
-        XCTAssertTrue(lines[lines.count - 4].hasPrefix("Buzz for alert event 6 (critical) at "))
+        XCTAssertTrue(lines[lines.count - 4].hasPrefix("Buzz for alert event 6 (high) at "))
         XCTAssertTrue(lines[lines.count - 4].hasSuffix(": nothing covered the watchface during the buzz"))
         XCTAssertTrue(lines[lines.count - 3].hasSuffix("a pop-up covered the watchface 230 ms in, so PebbleOS may have cut the buzz short"))
-        XCTAssertTrue(lines[lines.count - 2].hasPrefix("Buzz for alert event 8 (warning)"))
+        XCTAssertTrue(lines[lines.count - 2].hasPrefix("Buzz for alert event 8 (urgent low)"))
         XCTAssertTrue(lines[lines.count - 2].hasSuffix("a pop-up already covered the watchface, so PebbleOS may have dropped the buzz"))
     }
 
@@ -305,7 +305,7 @@ final class LupedWatchDiagnosticsLogTests: XCTestCase {
 
         let check = try XCTUnwrap(LupedWatchDiagnostics.buzzCheck(json: json, delivered: delivered, receivedAt: now))
         XCTAssertEqual(check.missing.map(\.event), [7])
-        XCTAssertTrue(check.message.contains("Alert event 7 (critical)"), check.message)
+        XCTAssertTrue(check.message.contains("Alert event 7 (high)"), check.message)
 
         let allBuzzed = try XCTUnwrap(LupedWatchDiagnostics.buzzCheck(json: json, delivered: Array(delivered.prefix(2)), receivedAt: now))
         XCTAssertTrue(allBuzzed.missing.isEmpty)
@@ -429,7 +429,7 @@ final class LupedSendTimingTests: XCTestCase {
 
     private func payload(_ mgdl: [Double], alertLevel: Int = 0, alertEvent: Int = 0, fullScreen: Bool = false, loop: LupedLoopStatus? = nil) -> LupedPayload {
         let readings = mgdl.enumerated().map { LupedReading(date: start.addingTimeInterval(Double($0.offset) * 300), milligramsPerDeciliter: $0.element, trend: nil) }
-        return LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: fullScreen, hostAlertLevel: alertLevel, alertEvent: alertEvent, loopStatus: loop)!
+        return LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: fullScreen, hostAlertState: alertLevel, alertEvent: alertEvent, loopStatus: loop)!
     }
 
     func testFirstMessageGoesNow() {
@@ -468,5 +468,16 @@ final class LupedSendTimingTests: XCTestCase {
 
     func testDisplayChangesGoNow() {
         XCTAssertEqual(LupedDelivery.timing(new: payload([100, 110], fullScreen: true, loop: loop), previous: payload([100, 110], loop: loop), needsLoopStatus: true), .now)
+    }
+}
+
+final class LupedAlertStateTests: XCTestCase {
+    func testStateNames() {
+        XCTAssertEqual(LupedPayload.alertStateName(0), "none")
+        XCTAssertEqual(LupedPayload.alertStateName(1), "low")
+        XCTAssertEqual(LupedPayload.alertStateName(2), "urgent low")
+        XCTAssertEqual(LupedPayload.alertStateName(3), "high")
+        XCTAssertEqual(LupedPayload.alertStateName(4), "predicted low")
+        XCTAssertEqual(LupedPayload.alertStateName(-1), "low, Watch Alarms is off")
     }
 }

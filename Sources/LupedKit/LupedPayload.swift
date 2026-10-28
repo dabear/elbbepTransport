@@ -64,7 +64,7 @@ public struct LupedPayload: Equatable {
     let readingCount: Int
     /// The host alert level (index 8) and alert event (index 9) sent, so the
     /// transport can check the watch's buzz records against them.
-    let hostAlertLevel: Int
+    let hostAlertState: Int
     let alertEvent: Int
     /// One line for the communication log, e.g. "7.0 mmol/L ↓ -0.2 at 11:15:02".
     let logSummary: String
@@ -132,7 +132,7 @@ public struct LupedPayload: Equatable {
     /// `settings` lets the log decode say why a loop status or status line field is
     /// `null`: the user's Status Line and Loop Ring choice, or a value the host
     /// didn't provide.
-    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil, settings: LupedSettings = LupedSettings()) {
+    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil, settings: LupedSettings = LupedSettings()) {
         let readings = Self.graphReadings(readings, limit: 12)
         guard let latest = readings.last else {
             return nil
@@ -164,7 +164,7 @@ public struct LupedPayload: Equatable {
             (unit == .millimolesPerLiter ? 1 : 0, "\(unitName) display"),
             (timestamp, "timestamp (milliseconds since Unix epoch)"),
             (fullScreen ? 1 : 0, fullScreen ? "full-screen ring" : "ring with graph"),
-            (hostAlertLevel, "host-issued alert level: \(Self.alertLevelNames[hostAlertLevel] ?? "unknown")" + (hostAlertReason.map { " (\($0))" } ?? "")),
+            (hostAlertState, "host alert: \(Self.alertStateName(hostAlertState))" + (hostAlertReason.map { " (\($0))" } ?? "")),
             (alertEvent, "alert event (changes each time the host fires an alert)"),
             // Loop status for the watch's IOB/COB and loop ring; null when not sent.
             (loopStatus?.insulinOnBoard.map { Self.rounded($0, scale: 1) } ?? NSNull(), loopStatus?.insulinOnBoard != nil ? "insulin on board (U)" : "insulin on board" + Self.notSent(insulinAndCarbs: true, settings: settings)),
@@ -187,7 +187,7 @@ public struct LupedPayload: Equatable {
         self.coreData = (try? JSONSerialization.data(withJSONObject: Array(message.prefix(10)))).flatMap { String(data: $0, encoding: .utf8) } ?? data
         self.latestDate = latest.date
         self.readingCount = history.count
-        self.hostAlertLevel = hostAlertLevel
+        self.hostAlertState = hostAlertState
         self.alertEvent = alertEvent
 
         let time = DateFormatter.localizedString(from: latest.date, dateStyle: .none, timeStyle: .medium)
@@ -242,8 +242,14 @@ public struct LupedPayload: Equatable {
         }
     }
 
-    /// Names for the host-issued alert level carried in `DATA` index 8.
-    static let alertLevelNames: [Int: String] = [0: "none", 1: "info", 2: "warning", 3: "critical"]
+    /// The host's active glucose alert carried in `DATA` index 8: 0 none, 1 low,
+    /// 2 urgent low, 3 high, 4 predicted low; negative while the user's Watch
+    /// Alarms switch is off (the watch colours its ring but doesn't buzz).
+    static func alertStateName(_ state: Int) -> String {
+        let names = [0: "none", 1: "low", 2: "urgent low", 3: "high", 4: "predicted low"]
+        guard let name = names[abs(state)] else { return "unknown (\(state))" }
+        return state < 0 ? name + ", Watch Alarms is off" : name
+    }
 
     /// Rounds to the watchface's display precision: one decimal for mmol/L, whole mg/dL.
     ///

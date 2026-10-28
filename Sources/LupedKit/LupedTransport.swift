@@ -43,7 +43,7 @@ enum LupedDelivery {
     /// (`previous`). Alert changes are never delayed.
     static func timing(new: LupedPayload, previous: LupedPayload?, needsLoopStatus: Bool) -> Timing {
         guard let previous else { return .now }
-        if new.hostAlertLevel != previous.hostAlertLevel || new.alertEvent != previous.alertEvent {
+        if new.hostAlertState != previous.hostAlertState || new.alertEvent != previous.alertEvent {
             return .now
         }
         if new.latestDate != previous.latestDate {
@@ -81,10 +81,12 @@ public struct LupedSnapshot {
     /// How many samples the host read, for the log when none are usable.
     public var storedSampleCount: Int
     public var unit: LupedUnit
-    /// Host-issued alert level (0 none, 1 info, 2 warning, 3 critical). The host
-    /// evaluates its own alerts and sets this; the watch does not evaluate thresholds.
-    public var hostAlertLevel: Int
-    /// Why the level is what it is, for the communication log only: the active
+    /// The host's active glucose alert: 0 none, 1 low, 2 urgent low, 3 high,
+    /// 4 predicted low; negative while Watch Alarms is off. The host evaluates its
+    /// own alerts; the watch colours its ring from this and buzzes when it's
+    /// positive and the alert event changes. It has no thresholds of its own.
+    public var hostAlertState: Int
+    /// Why the state is what it is, for the communication log only: the active
     /// alerts behind a non-zero level, or why it is 0. Not sent to the watch.
     public var hostAlertReason: String?
     /// Changes each time the host fires a glucose alert, including repeats of an
@@ -99,11 +101,11 @@ public struct LupedSnapshot {
     /// when the host doesn't provide them.
     public var therapy: LupedTherapy?
 
-    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertLevel: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, therapy: LupedTherapy? = nil) {
+    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, therapy: LupedTherapy? = nil) {
         self.readings = readings
         self.storedSampleCount = storedSampleCount
         self.unit = unit
-        self.hostAlertLevel = hostAlertLevel
+        self.hostAlertState = hostAlertState
         self.hostAlertReason = hostAlertReason
         self.alertEvent = alertEvent
         self.loopStatus = loopStatus
@@ -291,7 +293,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             alarmStatus = status
             record(.info, status)
         }
-        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertLevel: snapshot.hostAlertLevel, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: settings.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(settings.statusLine, therapy: snapshot.therapy, unit: snapshot.unit), settings: settings) else {
+        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertState: snapshot.hostAlertState, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: settings.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(settings.statusLine, therapy: snapshot.therapy, unit: snapshot.unit), settings: settings) else {
             record(.info, String(format: "No usable CGM readings among %ld stored samples; nothing to send", snapshot.storedSampleCount))
             return
         }
@@ -511,8 +513,8 @@ public final class LupedTransport: PebbleTransportDelegate {
             record(.fromWatch, "#\(transactionID) ACK in \(elapsed) ms · watch stored the \(readingTime) reading, \(push.payload.readingCount == 0 ? "no history (full-screen ring)" : "\(push.payload.readingCount) history points")\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
             deliveredGeneration = push.generation
             deliveredPayload = push.payload
-            if push.payload.hostAlertLevel > 0, push.payload.alertEvent != deliveredAlerts.last?.event {
-                deliveredAlerts.append(.init(event: push.payload.alertEvent, level: push.payload.hostAlertLevel, deliveredAt: Date()))
+            if push.payload.hostAlertState > 0, push.payload.alertEvent != deliveredAlerts.last?.event {
+                deliveredAlerts.append(.init(event: push.payload.alertEvent, level: push.payload.hostAlertState, deliveredAt: Date()))
                 deliveredAlerts = Array(deliveredAlerts.suffix(10))
             }
             pushRetry?.cancel()
@@ -897,7 +899,7 @@ extension LupedWatchDiagnostics {
         }
         let lines = missing.map { alert in
             let time = DateFormatter.localizedString(from: alert.deliveredAt, dateStyle: .none, timeStyle: .medium)
-            return "Alert event \(alert.event) (\(LupedPayload.alertLevelNames[alert.level] ?? "level \(alert.level)")), acknowledged at \(time), has no buzz record: the watchface didn't try to buzz. It may have just started, since the first event after a start is only recorded."
+            return "Alert event \(alert.event) (\(LupedPayload.alertStateName(alert.level))), acknowledged at \(time), has no buzz record: the watchface didn't try to buzz. It may have just started, since the first event after a start is only recorded."
         }
         return (missing, "Buzz check:\n" + lines.joined(separator: "\n"))
     }
@@ -912,7 +914,7 @@ extension LupedWatchDiagnostics {
         }
         let started = Date(timeIntervalSince1970: buzz[2].doubleValue / 1_000)
         let time = DateFormatter.localizedString(from: started, dateStyle: .none, timeStyle: .medium)
-        let level = LupedPayload.alertLevelNames[buzz[1].intValue] ?? "level \(buzz[1])"
+        let level = LupedPayload.alertStateName(buzz[1].intValue)
         let outcome: String
         switch buzz[3].intValue {
         case -2:
