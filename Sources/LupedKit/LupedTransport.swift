@@ -147,12 +147,11 @@ public struct LupedLoopStatus: Equatable {
     }
 }
 
-/// Sends a host app's glucose readings and alert settings to the Luped
+/// Sends a host app's glucose readings, alerts and loop status to the Luped
 /// watchface over a `PebbleTransport`.
 ///
-/// The host supplies a `snapshotProvider` and calls `refresh()` when readings,
-/// its display unit, its alert settings or its alert mute change. Luped's own
-/// settings are applied whenever `settings` changes.
+/// The host supplies a `snapshotProvider` and calls `refresh()` when any of them
+/// change. Luped's own settings are applied whenever `settings` changes.
 ///
 /// The latest payload is kept so a watchface `refresh` or a new session can
 /// re-send it. A rejected or unacknowledged send is retried with backoff, and
@@ -197,9 +196,6 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// the units the watch chose. The host runs its own checks.
     public var bolusRequested: ((_ units: Double, _ forced: Bool) -> Void)?
 
-    /// Last logged alarm state, so the log records each change once.
-    private var alarmStatus: String?
-    private var settingsObservers: Set<AnyCancellable> = []
     private var latestPayload: LupedPayload?
     /// Incremented on every send request; a send completing with an older
     /// value means another request arrived while it was in flight.
@@ -242,20 +238,6 @@ public final class LupedTransport: PebbleTransportDelegate {
         transport.delegate = self
     }
 
-    /// Keeps the settings in `defaults` (Settings → Devices → Pebble) and
-    /// follows changes to them.
-    public convenience init(hostName: String, defaults: UserDefaults = .standard) {
-        self.init(hostName: hostName, settings: defaults.lupedSettings)
-        Publishers.MergeMany(
-            defaults.publisher(for: \.lupedPebbleEnabled).map { _ in () }.eraseToAnyPublisher(),
-            defaults.publisher(for: \.lupedPebbleWatchfaceUUID).map { _ in () }.eraseToAnyPublisher(),
-            defaults.publisher(for: \.lupedPebbleAlarmsEnabled).map { _ in () }.eraseToAnyPublisher(),
-            defaults.publisher(for: \.lupedPebbleFullScreen).map { _ in () }.eraseToAnyPublisher()
-        )
-        .sink { [weak self] in self?.settings = defaults.lupedSettings }
-        .store(in: &settingsObservers)
-    }
-
     /// Writes to the communication log and the host's diagnostic log.
     private func record(_ kind: LupedCommunicationLog.Kind, _ message: String) {
         diagnosticLog?(kind, message)
@@ -288,11 +270,6 @@ public final class LupedTransport: PebbleTransportDelegate {
             return
         }
 
-        let status = LupedPayload.watchAlarmStatus(watchAlarmsEnabled: settings.alarmsEnabled)
-        if status != alarmStatus {
-            alarmStatus = status
-            record(.info, status)
-        }
         guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertState: snapshot.hostAlertState, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: settings.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(settings.shownStatusLine, therapy: snapshot.therapy, unit: snapshot.unit), settings: settings) else {
             record(.info, String(format: "No usable CGM readings among %ld stored samples; nothing to send", snapshot.storedSampleCount))
             return
@@ -365,13 +342,13 @@ public final class LupedTransport: PebbleTransportDelegate {
     private func settingsDidChange(from old: LupedSettings) {
         sendImmediatelyUntil = Date().addingTimeInterval(5)
         if settings.alarmsEnabled != old.alarmsEnabled {
-            record(.info, "Watch alarms \(settings.alarmsEnabled ? "enabled" : "disabled")")
+            record(.info, "Watch Alarms \(settings.alarmsEnabled ? "on" : "off: the watch won't buzz")")
         }
         if settings.statusLine != old.statusLine {
             record(.info, "Watch status line: \(settings.statusLine.displayName)")
         }
         if settings.showsLoopRing != old.showsLoopRing {
-            record(.info, "Watch Last Loop \(settings.showsLoopRing ? "on" : "off: the watch won't show when the host last looped")")
+            record(.info, "Watch Last Loop \(settings.showsLoopRing ? "on" : "off: the watch won't show when \(hostName) last looped")")
         }
         if settings.fullScreen != old.fullScreen {
             record(.info, "Watch layout: \(settings.fullScreen ? "Large Glucose (no graph, status line or Last Loop)" : "Graph")")
@@ -387,7 +364,7 @@ public final class LupedTransport: PebbleTransportDelegate {
     private func applyLink() {
         let enabled = settings.isEnabled
         let uuid = settings.watchfaceUUID
-        record(.info, String(format: "Settings changed: %@ for app %@", enabled ? "enabled" : "disabled", uuid.uuidString))
+        record(.info, enabled ? "Watch link settings changed: watchface \(uuid.uuidString.lowercased())" : "Watch link off")
         transport.reconfigure(isEnabled: enabled, appUUID: uuid)
 
         guard enabled else {
@@ -554,7 +531,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         record(.info, "Send Now requested")
         status.lastResult = nil
         guard transport.isSessionOpen else {
-            status.lastResult = NSLocalizedString("No watch session; the reading is sent as soon as the watch connects.", bundle: .lupedKit, comment: "Pebble Send Now result: no watch session")
+            status.lastResult = NSLocalizedString("The watch isn't connected; the reading is sent as soon as it connects.", bundle: .lupedKit, comment: "Pebble Send Now result: no watch session")
             Task { await refresh() }
             return
         }
@@ -744,7 +721,7 @@ public final class LupedLinkStatus: ObservableObject {
     @Published public var retryAt: Date?
     /// Sending paused after the watchface stopped accepting readings.
     @Published public var paused = false
-    /// Feedback for Send Now or a watch request that could not complete.
+    /// Feedback for Send Now when it could not send.
     @Published public var lastResult: String?
     @Published public var diagnostics: LupedWatchDiagnostics?
     /// Why the last watch-info request got no answer, if it did not.
@@ -758,11 +735,6 @@ public struct LupedWatchDiagnostics {
     public let countingSince: Date?
     public let readingsReceived: Int?
     public let refreshRequests: Int?
-    public let urgentLowAlarms: Int?
-    public let lowAlarms: Int?
-    public let highAlarms: Int?
-    public let messagesIn: Int?
-    public let messagesOut: Int?
     public let staleTransitions: Int?
     public let phoneDisconnects: Int?
     public let phoneDisconnectedSeconds: Int?
@@ -782,11 +754,6 @@ public struct LupedWatchDiagnostics {
         countingSince = int(3).map { Date(timeIntervalSince1970: TimeInterval($0) / 1_000) }
         readingsReceived = int(13)
         refreshRequests = int(14)
-        urgentLowAlarms = int(16)
-        lowAlarms = int(17)
-        highAlarms = int(18)
-        messagesIn = int(19)
-        messagesOut = int(21)
         staleTransitions = int(31)
         phoneDisconnects = int(34)
         phoneDisconnectedSeconds = int(35).map { $0 / 1_000 }
@@ -813,9 +780,9 @@ extension LupedWatchDiagnostics {
         "DATA messages received",
         "refresh requests sent",
         "refresh requests deferred",
-        "urgent-low alarms (on-watch thresholds, CrimsonBear only)",
-        "low alarms (on-watch thresholds, CrimsonBear only)",
-        "high alarms (on-watch thresholds, CrimsonBear only)",
+        "unused (always 0)",
+        "unused (always 0)",
+        "unused (always 0)",
         "messages received",
         "bytes received",
         "messages sent",

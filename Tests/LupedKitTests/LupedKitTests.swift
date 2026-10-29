@@ -177,15 +177,6 @@ final class LupedPayloadTests: XCTestCase {
     }
 }
 
-final class LupedAlarmStatusTests: XCTestCase {
-    // The host issues the alerts (DATA index 8) and applies its own mute, so the
-    // watch-side status reports only the user's Watch Alarms switch.
-    func testStatusReflectsWatchAlarmsSwitch() {
-        XCTAssertEqual(LupedPayload.watchAlarmStatus(watchAlarmsEnabled: true), "Watch alarms on")
-        XCTAssertEqual(LupedPayload.watchAlarmStatus(watchAlarmsEnabled: false), "Watch alarms off: Watch Alarms is turned off")
-    }
-}
-
 final class LupedSettingsTests: XCTestCase {
     func testRawValueRoundTrips() {
         let settings = LupedSettings(isEnabled: true, watchfaceUUID: UUID(), alarmsEnabled: false, fullScreen: true)
@@ -201,7 +192,7 @@ final class LupedSettingsTests: XCTestCase {
 
     func testMissingKeysUseDefaults() {
         XCTAssertEqual(LupedSettings(rawValue: [:]), LupedSettings())
-        XCTAssertEqual(LupedSettings(rawValue: [UserDefaults.lupedPebbleWatchfaceUUIDKey: "not a uuid"]).watchfaceUUID, LupedSettings.defaultWatchfaceUUID)
+        XCTAssertEqual(LupedSettings(rawValue: ["lupedPebbleWatchfaceUUID": "not a uuid"]).watchfaceUUID, LupedSettings.defaultWatchfaceUUID)
     }
 }
 

@@ -54,7 +54,7 @@ public struct LupedPayload: Equatable {
     /// `DATA` indexes 0–9 (glucose, history, display, alerts) without the loop
     /// status and status line, so the transport can tell a loop-only change apart.
     let coreData: String
-    /// Start date of the latest reading, for diagnostics.
+    /// Start date of the latest reading; the send timing compares it with the loop result.
     let latestDate: Date
     /// The loop status's last loop completed time (`DATA` 12), if sent. Later
     /// than `latestDate` once the loop has run on that reading.
@@ -123,13 +123,6 @@ public struct LupedPayload: Equatable {
         }
     }
 
-    /// The watch-alarm line for the communication log. The host issues the alerts
-    /// (index 8) and applies its own mute, so the only control on the watch is the
-    /// user's Watch Alarms switch.
-    public static func watchAlarmStatus(watchAlarmsEnabled: Bool) -> String {
-        watchAlarmsEnabled ? "Watch alarms on" : "Watch alarms off: Watch Alarms is turned off"
-    }
-
     /// `alertEvent` changes each time the host fires a glucose alert (the first
     /// fire and every repeat), so the watch can buzz on a repeat even though the
     /// alert level stays the same.
@@ -156,9 +149,8 @@ public struct LupedPayload: Equatable {
 
         // Each DATA field paired with the description shown under the summary in the
         // communication log, so the wire format and its decode share one definition
-        // and cannot drift apart. The Luped protocol is deliberately minimal: alerts
-        // are host-issued (index 8) and the watch colours its ring from its own
-        // built-in thresholds, so no alarm fields or colour thresholds travel.
+        // and cannot drift apart. Alerts are host-issued (index 8), and the watch
+        // colours its ring from that, so no thresholds travel.
         let fields: [(value: Any, description: String)] = [
             (1, "protocol version"),
             (values[values.count - 1], "current glucose (\(unitName))"),

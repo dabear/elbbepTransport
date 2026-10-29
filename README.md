@@ -28,7 +28,6 @@ discovery does not recognize Core Devices watches (Pebble Time 2, Pebble Round
   without it a JS-free app's inbox is limited to 144 bytes.
 - Acknowledges the app's AppMessage pushes and decodes their tuples.
 - Pushes AppMessage dictionaries and reports the watch's ACK or NACK.
-- Starts and stops the app over the app run-state endpoint.
 
 What to send, when, and how to retry belongs to your app.
 
@@ -82,24 +81,23 @@ disabling releases Bluetooth entirely.
 
 ## LupedKit
 
-`LupedTransport` sends a host app's CGM readings and glucose alert settings to
-Luped and keeps Settings → Devices → Pebble state: link status, delivery and
-retries, watch diagnostics, and a communication log.
+`LupedTransport` sends a host app's CGM readings, glucose alerts and loop status
+to Luped and keeps the plugin's state: link status, delivery and retries, watch
+diagnostics, and a communication log.
 
-Luped's own settings are a `LupedSettings` value that the host persists.
-Assigning `luped.settings` applies a change. A plugin can keep
-`settings.rawValue` in its own saved state and create the transport with
-`LupedTransport(hostName:settings:)`. An app can instead keep them in
-`UserDefaults` under the `lupedPebble…` keys with
-`LupedTransport(hostName:defaults:)`, which follows changes to those keys, so a
-settings screen can bind to them with `@AppStorage`.
+Luped's own settings (watchface, Watch Alarms, layout, status line, Last Loop)
+are a `LupedSettings` value that the host persists: keep `settings.rawValue` in
+the plugin's saved state, create the transport with
+`LupedTransport(hostName:settings:)`, and assign `luped.settings` to apply a
+change. `needsLoopStatus` and `needsTherapy` say what the current settings
+need from the host.
 
 The host app adapts its own types:
 
 ```swift
 import LupedKit
 
-let luped = LupedTransport(hostName: "Trio")
+let luped = LupedTransport(hostName: "Loop", settings: savedSettings)
 luped.diagnosticLog = { kind, message in /* host logging */ }
 luped.snapshotProvider = {
     LupedSnapshot(
@@ -108,26 +106,27 @@ luped.snapshotProvider = {
         },
         storedSampleCount: recentCGMReadings.count,
         unit: usesMmol ? .millimolesPerLiter : .milligramsPerDeciliter,
-        // Host-issued alert level: 0 none, 1 info, 2 warning, 3 critical.
-        hostAlertLevel: currentWatchAlertLevel,
+        // The host's active glucose alert: 0 none, 1 low, 2 urgent low, 3 high,
+        // 4 predicted low; negative while Watch Alarms is off.
+        hostAlertState: currentGlucoseAlertState,
         // Advance on every alert fire, including repeats; persist across launches.
-        alertEvent: savedAlertEvent
+        alertEvent: savedAlertEvent,
+        loopStatus: LupedLoopStatus(insulinOnBoard: iob, carbsOnBoard: cob, lastLoopCompleted: lastLoop, isClosedLoop: closedLoop)
     )
 }
 luped.start()
 
-// On every new CGM reading, or when the host issues or clears a glucose alert:
+// On every new reading, loop result, or alert the host issues or clears:
 Task { await luped.refresh() }
 ```
 
 Glucose alerts are host-issued: the host evaluates its own alerts and passes the
-highest active level to the watch via `hostAlertLevel`, plus an `alertEvent` that
-changes each time it fires an alert (the first fire and every repeat). The watch
-buzzes when the alert event changes while the level is above 0, so it repeats in
-step with the host and stops when the user acknowledges on the phone. The watch
-does not evaluate thresholds, and it colours its ring from its own built-in
-low/high. The communication log records whether watch alarms are on or off (the
-user's Watch Alarms switch), using `hostName`.
+most important active glucose alert as `hostAlertState`, plus an `alertEvent`
+that changes each time it fires one (the first fire and every repeat). The watch
+buzzes when the alert event changes while the state is above 0, so it repeats in
+step with the host and stops when the user acknowledges on the phone. It colours
+its ring from the state (red for lows, amber for high) and has no thresholds of
+its own.
 
 The Luped watchface and its `DATA` protocol live in
 [CrimsonBearPebbleWatchFace](https://github.com/dabear/CrimsonBearPebbleWatchFace)

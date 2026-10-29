@@ -44,13 +44,6 @@ public enum PebbleAppMessage {
     public static let alloyReadyKey: UInt32 = 15_025
 }
 
-/// PebbleOS app run-state endpoint: start or stop an app by UUID.
-private enum AppRunState {
-    static let endpoint: UInt16 = 0x34
-    static let run: UInt8 = 0x01
-    static let stop: UInt8 = 0x02
-}
-
 /// The phone-version exchange PebbleOS starts on every new session.
 ///
 /// Without the 8 KiB AppMessage capability, PebbleOS limits a JS-free
@@ -252,7 +245,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
             return
         }
 
-        record(.info, String(format: "Starting PPoGATT service for app %@", appUUID.uuidString))
+        record(.info, String(format: "Watch link on for watchface %@", appUUID.uuidString.lowercased()))
         peripheralManager = CBPeripheralManager(delegate: self, queue: .main)
     }
 
@@ -318,11 +311,6 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         return message
     }
 
-    /// Starts or stops the app on the watch.
-    public func sendAppRunState(run: Bool) {
-        sendFrame(endpoint: AppRunState.endpoint, payload: Data([run ? AppRunState.run : AppRunState.stop]) + appUUID.bytes)
-    }
-
     // MARK: - GATT service
 
     private func publishService(on manager: CBPeripheralManager) {
@@ -382,7 +370,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
             dataCharacteristic = nil
             return
         }
-        record(.info, "Published PPoGATT service; waiting for the watch to discover it")
+        record(.info, "Waiting for the watch to connect (PPoGATT service published)")
         scheduleWaitCheck()
     }
 
@@ -458,7 +446,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
                 sendPacket(type: PPoGATT.typeResetComplete, sequence: 0)
             }
             sessionState = .open
-            record(.info, "PPoGATT session open")
+            record(.info, "Watch connected (PPoGATT session open)")
             delegate?.pebbleTransportSessionDidOpen(self)
         case PPoGATT.typeAck:
             guard case .open = sessionState else { return }
