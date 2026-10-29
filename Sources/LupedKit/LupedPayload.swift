@@ -60,7 +60,7 @@ public struct LupedPayload: Equatable {
     /// than `latestDate` once the loop has run on that reading.
     let lastLoopCompleted: Date?
     /// Number of history readings sent (index 4), for diagnostics. `0` in
-    /// full-screen mode, which has no graph.
+    /// the Large Glucose layout, which has no graph.
     let readingCount: Int
     /// The host alert level (index 8) and alert event (index 9) sent, so the
     /// transport can check the watch's buzz records against them.
@@ -100,11 +100,14 @@ public struct LupedPayload: Equatable {
 
     /// Why a loop status field is `null`, for the log decode.
     static func notSent(insulinAndCarbs: Bool, settings: LupedSettings) -> String {
+        if settings.fullScreen {
+            return " (not sent: Layout is Large Glucose)"
+        }
         if insulinAndCarbs, settings.statusLine != .iobAndCob {
             return " (not sent: Status Line is \(settings.statusLine.displayName))"
         }
         if !insulinAndCarbs, !settings.needsLoopStatus {
-            return " (not sent: Status Line is None and Loop Ring is off)"
+            return " (not sent: Status Line is None and Last Loop is off)"
         }
         return " (not provided by the host)"
     }
@@ -112,6 +115,7 @@ public struct LupedPayload: Equatable {
     /// The log description of `DATA` index 14.
     static func statusLineDescription(_ line: String?, settings: LupedSettings) -> String {
         if line != nil { return "status line" }
+        if settings.fullScreen { return "status line: none (Layout is Large Glucose)" }
         switch settings.statusLine {
         case .none: return "status line: none (Status Line is None)"
         case .iobAndCob: return "status line: IOB and COB, formatted on the watch"
@@ -130,7 +134,7 @@ public struct LupedPayload: Equatable {
     /// fire and every repeat), so the watch can buzz on a repeat even though the
     /// alert level stays the same.
     /// `settings` lets the log decode say why a loop status or status line field is
-    /// `null`: the user's Status Line and Loop Ring choice, or a value the host
+    /// `null`: the user's Layout, Status Line and Last Loop choices, or a value the host
     /// didn't provide.
     init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil, settings: LupedSettings = LupedSettings()) {
         let readings = Self.graphReadings(readings, limit: 12)
@@ -145,8 +149,8 @@ public struct LupedPayload: Equatable {
         let delta = previous.map { unit.value(fromMilligramsPerDeciliter: latest.milligramsPerDeciliter) - unit.value(fromMilligramsPerDeciliter: $0.milligramsPerDeciliter) } ?? 0
         let direction = latest.trend?.rawValue ?? Self.directionIndex(from: previous, to: latest)
         let timestamp = Int64(latest.date.timeIntervalSince1970 * 1_000)
-        // The full-screen ring has no graph, so it gets no history. Turning
-        // full-screen off sends a new DATA right away, which brings the history back.
+        // Large Glucose has no graph, so it gets no history. Switching back to
+        // Graph sends a new DATA right away, which brings the history back.
         let history = fullScreen ? [] : values
         let unitName = unit == .millimolesPerLiter ? "mmol/L" : "mg/dL"
 
@@ -160,10 +164,10 @@ public struct LupedPayload: Equatable {
             (values[values.count - 1], "current glucose (\(unitName))"),
             (Self.rounded(delta, for: unit), "delta (\(unitName))"),
             (direction, "trend code \(Self.trendArrows[direction])"),
-            (history, fullScreen ? "glucose history (not sent: the full-screen ring has no graph)" : "glucose history (\(history.count) readings)"),
+            (history, fullScreen ? "glucose history (not sent: Large Glucose has no graph)" : "glucose history (\(history.count) readings)"),
             (unit == .millimolesPerLiter ? 1 : 0, "\(unitName) display"),
             (timestamp, "timestamp (milliseconds since Unix epoch)"),
-            (fullScreen ? 1 : 0, fullScreen ? "full-screen ring" : "ring with graph"),
+            (fullScreen ? 1 : 0, fullScreen ? "layout: Large Glucose" : "layout: Graph"),
             (hostAlertState, "host alert: \(Self.alertStateName(hostAlertState))" + (hostAlertReason.map { " (\($0))" } ?? "")),
             (alertEvent, "alert event (changes each time the host fires an alert)"),
             // Loop status for the watch's IOB/COB and loop ring; null when not sent.

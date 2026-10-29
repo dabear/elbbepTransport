@@ -25,7 +25,7 @@ final class LupedPayloadTests: XCTestCase {
         XCTAssertEqual(payload.readingCount, 2)
     }
 
-    // The full-screen ring has no graph: the history is sent empty, while the
+    // Large Glucose has no graph: the history is sent empty, while the
     // current value, delta and trend still come from the full readings.
     // Loop status: IOB to one decimal (so it changes about once a reading, not
     // every minute), whole grams of COB, the last loop in ms
@@ -104,10 +104,10 @@ final class LupedPayloadTests: XCTestCase {
             "1: 110 current glucose (mg/dL)",
             "2: 10 delta (mg/dL)",
             "3: 4 trend code ↗",
-            "4: [] glucose history (not sent: the full-screen ring has no graph)",
+            "4: [] glucose history (not sent: Large Glucose has no graph)",
             "5: 0 mg/dL display",
             "6: \(timestamp) timestamp (milliseconds since Unix epoch)",
-            "7: 1 full-screen ring",
+            "7: 1 layout: Large Glucose",
             "8: 0 host alert: none",
             "9: 0 alert event (changes each time the host fires an alert)",
             "10: null insulin on board (not provided by the host)",
@@ -395,8 +395,8 @@ final class LupedStatusLineChoiceTests: XCTestCase {
         XCTAssertEqual(Array(off.suffix(5)), [
             "10: null insulin on board (not sent: Status Line is None)",
             "11: null carbs on board (not sent: Status Line is None)",
-            "12: null last loop completed (not sent: Status Line is None and Loop Ring is off)",
-            "13: null closed or open loop (not sent: Status Line is None and Loop Ring is off)",
+            "12: null last loop completed (not sent: Status Line is None and Last Loop is off)",
+            "13: null closed or open loop (not sent: Status Line is None and Last Loop is off)",
             "14: null status line: none (Status Line is None)",
         ])
         let ring = try decoded(settings(.none), loopStatus: status)
@@ -412,6 +412,34 @@ final class LupedStatusLineChoiceTests: XCTestCase {
         let off = settings(.none, loopRing: false)
         let payload = try XCTUnwrap(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, loopStatus: off.loopStatusToSend(status), statusLine: nil, settings: off))
         XCTAssertTrue(payload.data.hasSuffix(",null,null,null,null,null]"), payload.data)
+    }
+
+    // Large Glucose has no status line or loop ring: nothing beyond readings is
+    // requested or sent, and the chosen line is kept for when Graph returns.
+    func testLargeGlucoseTurnsOffTheStatusLineAndLastLoop() throws {
+        for line in LupedStatusLine.allCases {
+            var large = settings(line)
+            large.fullScreen = true
+            XCTAssertEqual(large.shownStatusLine, LupedStatusLine.none, "\(line)")
+            XCTAssertFalse(large.showsLoopRing, "\(line)")
+            XCTAssertFalse(large.needsLoopStatus, "\(line)")
+            XCTAssertFalse(large.needsTherapy, "\(line)")
+            XCTAssertNil(large.loopStatusToSend(status), "\(line)")
+            XCTAssertEqual(large.statusLine, line, "the choice is kept")
+            large.fullScreen = false
+            XCTAssertEqual(large, settings(line))
+        }
+        var large = settings(.iobAndCob)
+        large.fullScreen = true
+        let payload = try XCTUnwrap(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: true, loopStatus: large.loopStatusToSend(status), statusLine: nil, settings: large))
+        let rows = payload.logDetails.components(separatedBy: "\n").dropFirst().dropLast().map { $0.split(separator: " ").joined(separator: " ") }
+        XCTAssertEqual(Array(rows.suffix(5)), [
+            "10: null insulin on board (not sent: Layout is Large Glucose)",
+            "11: null carbs on board (not sent: Layout is Large Glucose)",
+            "12: null last loop completed (not sent: Layout is Large Glucose)",
+            "13: null closed or open loop (not sent: Layout is Large Glucose)",
+            "14: null status line: none (Layout is Large Glucose)",
+        ])
     }
 
     func testStoredSettingsRoundTrip() {

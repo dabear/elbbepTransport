@@ -293,7 +293,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             alarmStatus = status
             record(.info, status)
         }
-        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertState: snapshot.hostAlertState, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: settings.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(settings.statusLine, therapy: snapshot.therapy, unit: snapshot.unit), settings: settings) else {
+        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertState: snapshot.hostAlertState, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: settings.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(settings.shownStatusLine, therapy: snapshot.therapy, unit: snapshot.unit), settings: settings) else {
             record(.info, String(format: "No usable CGM readings among %ld stored samples; nothing to send", snapshot.storedSampleCount))
             return
         }
@@ -371,10 +371,10 @@ public final class LupedTransport: PebbleTransportDelegate {
             record(.info, "Watch status line: \(settings.statusLine.displayName)")
         }
         if settings.showsLoopRing != old.showsLoopRing {
-            record(.info, "Watch loop ring \(settings.showsLoopRing ? "on" : "off: the watch won't show when the host last looped")")
+            record(.info, "Watch Last Loop \(settings.showsLoopRing ? "on" : "off: the watch won't show when the host last looped")")
         }
         if settings.fullScreen != old.fullScreen {
-            record(.info, "Watch display: \(settings.fullScreen ? "full-screen ring" : "ring with graph")")
+            record(.info, "Watch layout: \(settings.fullScreen ? "Large Glucose (no graph, status line or Last Loop)" : "Graph")")
         }
         if settings.isEnabled != transport.isEnabled || settings.watchfaceUUID != transport.appUUID {
             applyLink()
@@ -510,7 +510,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         let elapsed = Int(Date().timeIntervalSince(push.sentAt) * 1_000)
         let readingTime = DateFormatter.localizedString(from: push.payload.latestDate, dateStyle: .none, timeStyle: .medium)
         if acknowledged {
-            record(.fromWatch, "#\(transactionID) ACK in \(elapsed) ms · watch stored the \(readingTime) reading, \(push.payload.readingCount == 0 ? "no history (full-screen ring)" : "\(push.payload.readingCount) history points")\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
+            record(.fromWatch, "#\(transactionID) ACK in \(elapsed) ms · watch stored the \(readingTime) reading, \(push.payload.readingCount == 0 ? "no history (Large Glucose)" : "\(push.payload.readingCount) history points")\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
             deliveredGeneration = push.generation
             deliveredPayload = push.payload
             if push.payload.hostAlertState > 0, push.payload.alertEvent != deliveredAlerts.last?.event {

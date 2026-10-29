@@ -16,13 +16,15 @@ public struct LupedSettings: Equatable {
     public var watchfaceUUID: UUID
     /// Watch vibration alarms. The host app's own alerts are unaffected.
     public var alarmsEnabled: Bool
-    /// Full-screen glucose ring instead of ring and graph.
+    /// The Large Glucose layout (a full-screen glucose ring) instead of Graph.
+    /// It has no graph, status line or loop ring, so it needs only readings.
     public var fullScreen: Bool
     /// What the left of the watch's status strip shows.
     public var statusLine: LupedStatusLine
-    /// The watch's loop ring (minutes since the last loop, closed or open) while
-    /// the status line is None. Every shown line needs the loop's age, which dims
-    /// the line when the loop is stale, so the ring is always on then.
+    /// Last Loop: the watch's loop ring (minutes since the last loop, closed or
+    /// open) while the status line is None. Every shown line needs the loop's
+    /// age, which dims the line when the loop is stale, so the ring is always on
+    /// then.
     public var loopRing: Bool
 
     public init(
@@ -41,22 +43,26 @@ public struct LupedSettings: Equatable {
         self.loopRing = loopRing
     }
 
-    /// Whether the watch shows the loop ring: always with a status line, and with
-    /// None only while `loopRing` is on.
-    public var showsLoopRing: Bool { statusLine != .none || loopRing }
+    /// The status line the watch shows: none with Large Glucose, which has no
+    /// strip. The chosen `statusLine` is kept for when Graph is chosen again.
+    public var shownStatusLine: LupedStatusLine { fullScreen ? .none : statusLine }
+
+    /// Whether the watch shows the loop ring: never with Large Glucose; otherwise
+    /// always with a status line, and with None only while `loopRing` is on.
+    public var showsLoopRing: Bool { !fullScreen && (statusLine != .none || loopRing) }
 
     /// Whether the watch needs the loop status (`DATA` 10–13) from the host.
     public var needsLoopStatus: Bool { showsLoopRing }
 
     /// Whether the status line is formatted from the host's therapy values.
-    public var needsTherapy: Bool { statusLine.needsTherapy }
+    public var needsTherapy: Bool { shownStatusLine.needsTherapy }
 
     /// The part of `status` the watch gets: the loop's age and mode (12–13) while
     /// the loop ring shows, and IOB and COB (10–11) only for the IOB & COB line,
     /// the only line the watch formats from them. Everything else is `null`.
     public func loopStatusToSend(_ status: LupedLoopStatus?) -> LupedLoopStatus? {
         guard needsLoopStatus, var status else { return nil }
-        if statusLine != .iobAndCob {
+        if shownStatusLine != .iobAndCob {
             status.insulinOnBoard = nil
             status.carbsOnBoard = nil
         }
@@ -96,7 +102,7 @@ public struct LupedSettings: Equatable {
 /// `null`, and a host needn't supply it (see `LupedSettings.needsLoopStatus` and
 /// `needsTherapy`, which also account for the loop ring).
 public enum LupedStatusLine: String, CaseIterable, Equatable {
-    /// An empty strip and no loop ring: `DATA` 10–14 are all `null`.
+    /// An empty strip; with Last Loop off too, `DATA` 10–14 are all `null`.
     case none
     case iobAndCob
     case tempBasal
