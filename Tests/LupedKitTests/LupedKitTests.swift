@@ -156,6 +156,19 @@ final class LupedPayloadTests: XCTestCase {
         XCTAssertTrue(payload.data.contains("[103,104,105,106,107,108,109,110,111,112,113,114]"), payload.data)
     }
 
+    // Index 15 names the app sending DATA; the watch reads only indexes 0-14,
+    // so it ignores it until a watchface uses it.
+    func testDataEndsWithTheHostID() throws {
+        let readings = [LupedReading(date: start, milligramsPerDeciliter: 120, trend: nil)]
+        let payload = try XCTUnwrap(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, hostID: "a1b2c3d4"))
+        let values = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(payload.data.utf8)) as? [Any])
+        XCTAssertEqual(values.count, 16)
+        XCTAssertEqual(values[15] as? String, "a1b2c3d4")
+        XCTAssertTrue(payload.logDetails.contains("host id (the app sending this)"), payload.logDetails)
+        let withoutID = try XCTUnwrap(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false))
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: Data(withoutID.data.utf8)) as? [Any])?.count, 15)
+    }
+
     // A 1-minute CGM: the graph still covers an hour (one value every 5 minutes,
     // newest last), and the delta compares against the reading 5 minutes earlier.
     func testOneMinuteReadingsAreThinnedToFiveMinutes() throws {
