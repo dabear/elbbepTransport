@@ -260,19 +260,19 @@ final class LupedWatchRequestTests: XCTestCase {
 final class LupedCommandTimingTests: XCTestCase {
     // The watch adds when the user confirmed, by its own clock.
     func testReadsWhenTheUserConfirmed() throws {
-        let timing = try XCTUnwrap(LupedCommandTiming(command: "bolus:1.5@1798000000"))
+        let timing = try XCTUnwrap(LupedCommandTiming(command: "carbs:30@1798000000"))
         XCTAssertEqual(timing.confirmedAt, Date(timeIntervalSince1970: 1_798_000_000))
-        XCTAssertEqual(LupedCommandTiming.stripped("bolus:1.5@1798000000"), "bolus:1.5")
+        XCTAssertEqual(LupedCommandTiming.stripped("carbs:30@1798000000"), "carbs:30")
         XCTAssertEqual(LupedWatchRequest(command: LupedCommandTiming.stripped("carbs:30@1798000000")), .carbs(30))
     }
 
     func testCommandsWithoutValidTimingHaveNone() {
-        XCTAssertNil(LupedCommandTiming(command: "bolus:1.5"))
-        XCTAssertNil(LupedCommandTiming(command: "bolus:1.5@"))
-        XCTAssertNil(LupedCommandTiming(command: "bolus:1.5@0"))
-        XCTAssertNil(LupedCommandTiming(command: "bolus:1.5@x"))
-        XCTAssertNil(LupedCommandTiming(command: "bolus:1.5@100,200"))
-        XCTAssertEqual(LupedCommandTiming.stripped("bolus:1.5"), "bolus:1.5")
+        XCTAssertNil(LupedCommandTiming(command: "carbs:30"))
+        XCTAssertNil(LupedCommandTiming(command: "carbs:30@"))
+        XCTAssertNil(LupedCommandTiming(command: "carbs:30@0"))
+        XCTAssertNil(LupedCommandTiming(command: "carbs:30@x"))
+        XCTAssertNil(LupedCommandTiming(command: "carbs:30@100,200"))
+        XCTAssertEqual(LupedCommandTiming.stripped("carbs:30"), "carbs:30")
     }
 }
 
