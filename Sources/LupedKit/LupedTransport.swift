@@ -16,6 +16,11 @@ enum LupedDelivery {
     /// Backoff for re-sending a rejected or unacknowledged reading. The phone
     /// cannot observe the watchface starting, and Luped asks for data only once.
     static let initialRetryDelay: TimeInterval = 30
+    /// When the watch sends its own message while a reading is unanswered, the two
+    /// may have crossed and the watch dropped the reading: if there is still no
+    /// reply this long after, send it again instead of waiting for the timeout
+    /// and the retry delay. The watch just showed it's there.
+    static let crossedMessageResendDelay: TimeInterval = 1
     static let maximumRetryDelay: TimeInterval = 300
 
     enum Unchanged: Equatable { case delivered, inFlight }
@@ -236,6 +241,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         didSet { status.paused = paused }
     }
     private var pushRetry: Task<Void, Never>?
+    private var crossedMessageResend: Task<Void, Never>?
 
     public init(hostName: String, settings: LupedSettings) {
         self.hostName = hostName
@@ -418,6 +424,8 @@ public final class LupedTransport: PebbleTransportDelegate {
         // A new session re-sends the reading itself.
         pushRetry?.cancel()
         pushRetry = nil
+        crossedMessageResend?.cancel()
+        crossedMessageResend = nil
         retryDelay = 0
         paused = false
         status.retryAt = nil
@@ -425,6 +433,7 @@ public final class LupedTransport: PebbleTransportDelegate {
     }
 
     public func pebbleTransport(_ transport: PebbleTransport, didReceive tuples: [UInt32: AppMessageTuple], message: [UInt8]) {
+        resendIfCrossed()
         if tuples[PebbleAppMessage.alloyReadyKey] != nil {
             dropMessagesToPreviousWatchface()
         }
@@ -682,6 +691,24 @@ public final class LupedTransport: PebbleTransportDelegate {
             self.record(.error, "#\(transactionID) no reply within \(Int(PebbleAppMessage.ackTimeout)) s")
             self.inflightPush = nil
             self.scheduleRetry()
+        }
+    }
+
+    /// Called for every message from the watch: if a reading is still unanswered a
+    /// moment later, it crossed this message and was dropped, so send it again now.
+    private func resendIfCrossed() {
+        guard let push = inflightPush, crossedMessageResend == nil else { return }
+        let transactionID = push.transactionID
+        crossedMessageResend = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(LupedDelivery.crossedMessageResendDelay * 1_000_000_000))
+            guard let self else { return }
+            self.crossedMessageResend = nil
+            guard !Task.isCancelled, self.inflightPush?.transactionID == transactionID else { return }
+            self.record(.info, "#\(transactionID) crossed a message from the watch and got no reply: sending it again")
+            self.inflightPush = nil
+            self.pushAckTimeout?.cancel()
+            self.pushAckTimeout = nil
+            self.sendIfNeeded(force: true)
         }
     }
 
