@@ -3,7 +3,7 @@ import ElbbepTransport
 import Foundation
 
 /// AppMessage dictionary keys from the Luped watchface's `messageKeys`.
-private enum LupedMessageKey {
+enum LupedMessageKey {
     static let command: UInt32 = 10_000
     static let data: UInt32 = 10_001
     static let configured: UInt32 = 10_003
@@ -76,79 +76,6 @@ enum LupedDelivery {
         if data == inFlight { return .inFlight }
         if data == delivered { return .delivered }
         return nil
-    }
-}
-
-/// The glucose and alert state a host app supplies for the next Luped payload.
-public struct LupedSnapshot {
-    /// Recent CGM readings; user-entered and display-only values excluded.
-    public var readings: [LupedReading]
-    /// How many samples the host read, for the log when none are usable.
-    public var storedSampleCount: Int
-    public var unit: LupedUnit
-    /// The host's active glucose alert: 0 none, 1 low, 2 urgent low, 3 high,
-    /// 4 predicted low; negative while Watch Alarms is off. The host evaluates its
-    /// own alerts; the watch colours its ring from this and buzzes when it's
-    /// positive and the alert event changes. It has no thresholds of its own.
-    public var hostAlertState: Int
-    /// Why the state is what it is, for the communication log only: the active
-    /// alerts behind a non-zero level, or why it is 0. Not sent to the watch.
-    public var hostAlertReason: String?
-    /// Changes each time the host fires a glucose alert, including repeats of an
-    /// alert that is still active, so the watch buzzes in step with the host.
-    /// Persist it across launches so a restart can't land on the value the watch
-    /// last saw; any value works as long as it changes on every fire.
-    public var alertEvent: Int
-    /// What the host's loop is doing, for the watch's IOB/COB and loop ring;
-    /// `nil` when the host doesn't provide it.
-    public var loopStatus: LupedLoopStatus?
-    /// The host's therapy values for a phone-formatted status line; `nil`
-    /// when the host doesn't provide them.
-    public var therapy: LupedTherapy?
-
-    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, therapy: LupedTherapy? = nil) {
-        self.readings = readings
-        self.storedSampleCount = storedSampleCount
-        self.unit = unit
-        self.hostAlertState = hostAlertState
-        self.hostAlertReason = hostAlertReason
-        self.alertEvent = alertEvent
-        self.loopStatus = loopStatus
-        self.therapy = therapy
-    }
-}
-
-/// The host's therapy values in mg/dL (glucose, ISF per U) and U/h (basal).
-/// Any value may be unknown.
-public struct LupedTherapy: Equatable {
-    public var tempBasalRate: Double?
-    public var scheduledBasalRate: Double?
-    public var insulinSensitivity: Double?
-    public var eventualGlucose: Double?
-    public var correctionRange: ClosedRange<Double>?
-
-    public init(tempBasalRate: Double? = nil, scheduledBasalRate: Double? = nil, insulinSensitivity: Double? = nil, eventualGlucose: Double? = nil, correctionRange: ClosedRange<Double>? = nil) {
-        self.tempBasalRate = tempBasalRate
-        self.scheduledBasalRate = scheduledBasalRate
-        self.insulinSensitivity = insulinSensitivity
-        self.eventualGlucose = eventualGlucose
-        self.correctionRange = correctionRange
-    }
-}
-
-/// The host's loop for the watch: insulin and carbs on board, when the loop
-/// last completed and whether it is closed. Any value may be unknown.
-public struct LupedLoopStatus: Equatable {
-    public var insulinOnBoard: Double?
-    public var carbsOnBoard: Double?
-    public var lastLoopCompleted: Date?
-    public var isClosedLoop: Bool?
-
-    public init(insulinOnBoard: Double? = nil, carbsOnBoard: Double? = nil, lastLoopCompleted: Date? = nil, isClosedLoop: Bool? = nil) {
-        self.insulinOnBoard = insulinOnBoard
-        self.carbsOnBoard = carbsOnBoard
-        self.lastLoopCompleted = lastLoopCompleted
-        self.isClosedLoop = isClosedLoop
     }
 }
 
@@ -247,9 +174,9 @@ public final class LupedTransport: PebbleTransportDelegate {
     private var diagnosticsRequested = false
     /// Outcomes of the watch's requests waiting to go back to it (`RESULT`), oldest first.
     private var pendingResults: [String] = []
-    private var bolusAuth = LupedBolusAuth()
+    var bolusAuth = LupedBolusAuth()
     /// The `COMMAND auth:…` handing the watch its bolus session key, until sent.
-    private var pendingBolusKey: String?
+    var pendingBolusKey: String?
     private var diagnosticsReplyTimeout: Task<Void, Never>?
     private var pushAckTimeout: Task<Void, Never>?
     private var retryDelay: TimeInterval = 0
@@ -269,7 +196,7 @@ public final class LupedTransport: PebbleTransportDelegate {
     }
 
     /// Writes to the communication log and the host's diagnostic log.
-    private func record(_ kind: LupedCommunicationLog.Kind, _ message: String) {
+    func record(_ kind: LupedCommunicationLog.Kind, _ message: String) {
         diagnosticLog?(kind, message)
         communicationLog.append(kind, message)
     }
@@ -645,7 +572,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         queueResult(result)
     }
 
-    private func queueResult(_ result: String) {
+    func queueResult(_ result: String) {
         pendingResults.append(result)
         if pendingResults.count > 5 {
             let dropped = pendingResults.prefix(pendingResults.count - 5)
@@ -653,74 +580,6 @@ public final class LupedTransport: PebbleTransportDelegate {
             record(.error, "RESULT \(dropped.joined(separator: ", ")) dropped: more than 5 results were waiting for the watch")
         }
         sendIfNeeded()
-    }
-
-    // MARK: - Signed boluses
-
-    /// Gives the watch a new bolus session key, replacing any earlier one.
-    private func startBolusSession() {
-        noteUnansweredBolus()
-        pendingBolusKey = bolusAuth.newSession()
-        record(.info, "New bolus session \(bolusAuth.session?.id ?? ""): requests signed with an earlier key are refused")
-        sendIfNeeded()
-    }
-
-    private func endBolusSession() {
-        guard bolusAuth.session != nil || pendingBolusKey != nil else { return }
-        noteUnansweredBolus()
-        record(.info, "Bolus session \(bolusAuth.session?.id ?? "") ended: signed bolus requests are refused until the watch gets a new key")
-        bolusAuth.endSession()
-        pendingBolusKey = nil
-    }
-
-    /// A request passed on without a bolus result yet can't be answered once its
-    /// session ends: say so, as the watch won't hear more of it.
-    private func noteUnansweredBolus() {
-        if let sequence = bolusAuth.unansweredSequence, let id = bolusAuth.session?.id {
-            record(.error, "Signed bolus request #\(sequence) (session \(id)) had no result from \(hostName) when its session ended; check \(hostName)'s history before asking again")
-        }
-    }
-
-    /// The log label of the `COMMAND auth` push for a session.
-    private static func bolusKeyLabel(_ id: String) -> String {
-        "COMMAND auth (bolus session \(id))"
-    }
-
-    private static func bolusSessionID(inLabel label: String) -> String? {
-        let prefix = "COMMAND auth (bolus session "
-        guard label.hasPrefix(prefix), label.hasSuffix(")") else { return nil }
-        return String(label.dropFirst(prefix.count).dropLast())
-    }
-
-    private func bolusKeyNotDelivered(_ id: String, _ reason: String) {
-        guard bolusAuth.session?.id == id else { return }
-        record(.error, "Bolus session \(id) key not delivered (\(reason)): the watch's signed bolus requests are refused until the watchface starts again and gets a new key")
-    }
-
-    /// Passes a signed bolus request on once, if `LupedBolusAuth` accepts it; a
-    /// resend of a handled one gets its results again.
-    private func handleSignedBolus(_ command: String) {
-        let action = LupedSignedBolus.actions.first { command.hasPrefix($0 + ":") } ?? "signedbolus"
-        guard let request = LupedSignedBolus(command: command) else {
-            record(.error, "Signed bolus request refused: malformed (COMMAND \(command))")
-            queueResult("\(action):refused")
-            return
-        }
-        switch bolusAuth.verify(request, now: Date()) {
-        case .accept(let request):
-            let carbs = request.grams.map { String(format: " with %g g of carbs", $0) } ?? ""
-            let confirmed = String(format: "confirmed %.0f s ago", Date().timeIntervalSince(request.confirmedAt))
-            record(.fromWatch, String(format: "Watch asked for a %@ U %@%@, %@, signature valid (session %@, #%d)", request.unitsText, request.forced ? "forced bolus" : "bolus", carbs, confirmed, request.sessionID, request.sequence))
-            bolusRequested?(request.units, request.forced, request.grams, request.confirmedAt)
-        case .resend(let results):
-            record(.info, "Signed bolus request #\(request.sequence) already handled: its result sent again, not passed on")
-            results.forEach(queueResult)
-        case .inProgress:
-            record(.info, "Signed bolus request #\(request.sequence) is still being handled: its result follows")
-        case .refuse(let reason):
-            record(.error, "Signed bolus request refused: \(reason)\(bolusAuth.keyNote(issuingKeys: issuesBolusKey)) (COMMAND \(command))")
-            queueResult("\(action):refused")
-        }
     }
 
     private func sendPendingCommand() {
@@ -775,7 +634,7 @@ public final class LupedTransport: PebbleTransportDelegate {
 
     /// Pushes the latest payload unless it was already delivered; `force` re-sends
     /// it for a new session or a watchface refresh request.
-    private func sendIfNeeded(force: Bool = false) {
+    func sendIfNeeded(force: Bool = false) {
         if force {
             requestGeneration = max(requestGeneration, deliveredGeneration + 1)
             paused = false
@@ -888,265 +747,3 @@ public final class LupedLinkStatus: ObservableObject {
     /// Why the last watch-info request got no answer, if it did not.
     @Published public var watchInfoNote: String?
 }
-
-/// Luped's diagnostics snapshot (`DIAGNOSTICS`, format version 2).
-public struct LupedWatchDiagnostics {
-    public let receivedAt: Date
-    public let battery: Int?
-    public let countingSince: Date?
-    public let readingsReceived: Int?
-    public let refreshRequests: Int?
-    public let staleTransitions: Int?
-    public let phoneDisconnects: Int?
-    public let phoneDisconnectedSeconds: Int?
-
-    public init?(json: String, receivedAt: Date = Date()) {
-        guard let data = json.data(using: .utf8),
-              let values = try? JSONSerialization.jsonObject(with: data) as? [Any],
-              (values.first as? NSNumber)?.intValue == 2
-        else {
-            return nil
-        }
-        func int(_ index: Int) -> Int? {
-            index < values.count ? (values[index] as? NSNumber)?.intValue : nil
-        }
-        self.receivedAt = receivedAt
-        battery = int(2)
-        countingSince = int(3).map { Date(timeIntervalSince1970: TimeInterval($0) / 1_000) }
-        readingsReceived = int(13)
-        refreshRequests = int(14)
-        staleTransitions = int(31)
-        phoneDisconnects = int(34)
-        phoneDisconnectedSeconds = int(35).map { $0 / 1_000 }
-    }
-}
-
-extension LupedWatchDiagnostics {
-    /// What each `DIAGNOSTICS` field means, in the order the watchface's
-    /// `diagnosticsSnapshot()` builds it (format version 2), for the communication log.
-    static let fieldDescriptions = [
-        "format version",
-        "watch clock (ms since Unix epoch)",
-        "battery (%)",
-        "counting since (ms since Unix epoch)",
-        "watchface start ID",
-        "full redraws",
-        "full redraw time, total (ms)",
-        "slowest full redraw (ms)",
-        "minute redraws",
-        "minute redraw time, total (ms)",
-        "slowest minute redraw (ms)",
-        "render failures",
-        "render retries",
-        "DATA messages received",
-        "refresh requests sent",
-        "refresh requests deferred",
-        "unused (always 0)",
-        "unused (always 0)",
-        "unused (always 0)",
-        "messages received",
-        "bytes received",
-        "messages sent",
-        "bytes sent",
-        "refresh responses",
-        "refresh response time, total (ms)",
-        "slowest refresh response (ms)",
-        "pixels redrawn",
-        "late minute events",
-        "minute event lateness, total (ms)",
-        "worst minute event lateness (ms)",
-        "refresh responses by latency (≤250, ≤500, ≤1000, ≤2000, ≤5000, ≤10000, ≤20000 ms, slower)",
-        "stale transitions (latest reading turned 15 min old)",
-        "no-data buzzes",
-        "oldest reading age while stale (ms)",
-        "phone disconnects",
-        "phone disconnected time, total (ms)",
-        "longest phone disconnect (ms)",
-        "phone disconnected now (1 = yes)",
-        "system pop-ups over the watchface (notifications, alarms, calls)",
-        "recent host-alert buzzes (listed below)",
-        "alert events while Watch Alarms was off (not buzzed)",
-    ]
-
-    /// Index of Luped's recent host-alert buzzes: up to 5 of
-    /// `[alert event, alert level, start (watch ms), outcome]`.
-    static let buzzesIndex = 39
-
-    /// The raw `DIAGNOSTICS` JSON decoded one field per line, like the `DATA`
-    /// decode. Falls back to the raw text when it isn't a version-2 array.
-    static func logDecode(json: String) -> String {
-        guard let data = json.data(using: .utf8),
-              let values = try? JSONSerialization.jsonObject(with: data) as? [Any],
-              (values.first as? NSNumber)?.intValue == 2
-        else {
-            return json
-        }
-        let fields: [(value: Any, description: String)] = values.enumerated().map { index, value in
-            let shown: Any
-            if index == buzzesIndex, let buzzes = value as? [Any] {
-                shown = "\(buzzes.count)"
-            } else if let number = value as? NSNumber {
-                shown = number.int64Value
-            } else if let list = value as? [Any] {
-                shown = "[" + list.map { ($0 as? NSNumber)?.stringValue ?? "\($0)" }.joined(separator: ", ") + "]"
-            } else {
-                shown = "\(value)"
-            }
-            return (shown, index < fieldDescriptions.count ? fieldDescriptions[index] : "unknown")
-        }
-        let buzzes = (values.count > buzzesIndex ? values[buzzesIndex] as? [[NSNumber]] : nil) ?? []
-        return ([LupedPayload.decodeTable(fields)] + buzzes.map(describeBuzz)).joined(separator: "\n")
-    }
-
-    /// Checks the alert fires the watch acknowledged against its buzz records.
-    /// A fire with no record means the watchface never tried to buzz; one with
-    /// a record that still went unfelt points at PebbleOS (see `describeBuzz`).
-    /// Only fires since the diagnostics window started, older than 10 s, and
-    /// (when the 5-record list is full) not older than its oldest record count.
-    static func buzzCheck(json: String, delivered: [LupedDeliveredAlert], receivedAt: Date) -> (missing: [LupedDeliveredAlert], message: String)? {
-        guard let data = json.data(using: .utf8),
-              let values = try? JSONSerialization.jsonObject(with: data) as? [Any],
-              (values.first as? NSNumber)?.intValue == 2,
-              values.count > buzzesIndex,
-              let buzzes = values[buzzesIndex] as? [[NSNumber]]
-        else {
-            return nil
-        }
-        var since = ((values[3] as? NSNumber)?.doubleValue).map { Date(timeIntervalSince1970: $0 / 1_000) } ?? .distantPast
-        if buzzes.count >= 5, let oldest = buzzes.first, oldest.count > 2 {
-            since = max(since, Date(timeIntervalSince1970: oldest[2].doubleValue / 1_000 - 2))
-        }
-        let checked = delivered.filter { $0.deliveredAt >= since && $0.deliveredAt <= receivedAt.addingTimeInterval(-10) }
-        guard !checked.isEmpty else {
-            return nil
-        }
-        let buzzed = Set(buzzes.compactMap { $0.first?.intValue })
-        let missing = checked.filter { !buzzed.contains($0.event) }
-        guard !missing.isEmpty else {
-            return ([], "Buzz check: the watch has a buzz record for each of the \(checked.count) alert fires it acknowledged")
-        }
-        let lines = missing.map { alert in
-            let time = DateFormatter.localizedString(from: alert.deliveredAt, dateStyle: .none, timeStyle: .medium)
-            return "Alert event \(alert.event) (\(LupedPayload.alertStateName(alert.level))), acknowledged at \(time), has no buzz record: the watchface didn't try to buzz. It may have just started, since the first event after a start is only recorded."
-        }
-        return (missing, "Buzz check:\n" + lines.joined(separator: "\n"))
-    }
-
-    /// One line per host-alert buzz. PebbleOS drops an app's vibration while
-    /// another one plays and cancels it when a system pop-up closes, without
-    /// telling the app, so the watch records whether a pop-up covered the
-    /// watchface during the 4.7 s buzz.
-    static func describeBuzz(_ buzz: [NSNumber]) -> String {
-        guard buzz.count >= 4 else {
-            return "Buzz: \(buzz)"
-        }
-        let started = Date(timeIntervalSince1970: buzz[2].doubleValue / 1_000)
-        let time = DateFormatter.localizedString(from: started, dateStyle: .none, timeStyle: .medium)
-        let level = LupedPayload.alertStateName(buzz[1].intValue)
-        let outcome: String
-        switch buzz[3].intValue {
-        case -2:
-            outcome = "the watchface's buzz call failed with an error, so it did not buzz"
-        case ..<0:
-            outcome = "nothing covered the watchface during the buzz"
-        case 0:
-            outcome = "a pop-up already covered the watchface, so PebbleOS may have dropped the buzz"
-        case let ms:
-            outcome = "a pop-up covered the watchface \(ms) ms in, so PebbleOS may have cut the buzz short"
-        }
-        return "Buzz for alert event \(buzz[0]) (\(level)) at \(time): \(outcome)"
-    }
-}
-
-/// When the user confirmed a watch command, from an optional suffix the watch
-/// adds to `COMMAND`: `<command>@<confirmedAt>`, whole seconds since 1970 by the
-/// watch's clock, which the Pebble app keeps in step with the phone's. A resent
-/// command keeps its `confirmedAt`, so it ages like the original.
-public struct LupedCommandTiming: Equatable {
-    public let confirmedAt: Date
-
-    /// `nil` when the command has no suffix, or one that isn't a positive whole number.
-    public init?(command: String) {
-        guard let at = command.lastIndex(of: "@"),
-              let seconds = Int(command[command.index(after: at)...]), seconds > 0
-        else { return nil }
-        confirmedAt = Date(timeIntervalSince1970: TimeInterval(seconds))
-    }
-
-    /// The command without its timing suffix.
-    public static func stripped(_ command: String) -> String {
-        command.lastIndex(of: "@").map { String(command[..<$0]) } ?? command
-    }
-}
-
-/// An unsigned dosing request from the watch: `carbs:<grams>`, with `nil` when
-/// the amount is missing, not a number, or not above zero. Boluses are only
-/// ever signed (`LupedSignedBolus`).
-enum LupedWatchRequest: Equatable {
-    case carbs(Double?)
-
-    init?(command: String) {
-        let parts = command.split(separator: ":", maxSplits: 1).map(String.init)
-        let amount = parts.count == 2 ? Double(parts[1]).flatMap { $0.isFinite && $0 > 0 ? $0 : nil } : nil
-        guard parts[0] == "carbs" else { return nil }
-        self = .carbs(amount)
-    }
-
-    var action: String { "carbs" }
-}
-
-/// An alert fire the watch acknowledged: a changed alert event at a level above 0.
-struct LupedDeliveredAlert: Equatable {
-    let event: Int
-    let level: Int
-    let deliveredAt: Date
-}
-
-/// The most recent watch communication events, newest last, kept in memory.
-@MainActor
-public final class LupedCommunicationLog: ObservableObject {
-    public enum Kind {
-        case toWatch, fromWatch, info, error
-    }
-
-    public struct Entry: Identifiable {
-        public let id = UUID()
-        public let date: Date
-        public let kind: Kind
-        public let message: String
-    }
-
-    public static let capacity = 500
-
-    public init() {}
-
-    @Published public private(set) var entries: [Entry] = []
-
-    public func append(_ kind: Kind, _ message: String) {
-        entries.append(Entry(date: Date(), kind: kind, message: message))
-        if entries.count > Self.capacity {
-            entries.removeFirst(entries.count - Self.capacity)
-        }
-    }
-
-    public func clear() {
-        entries.removeAll()
-    }
-
-    /// Plain text for sharing, oldest first.
-    public var text: String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return entries.map { entry in
-            let marker: String
-            switch entry.kind {
-            case .toWatch: marker = "→"
-            case .fromWatch: marker = "←"
-            case .info: marker = "·"
-            case .error: marker = "!"
-            }
-            return "\(formatter.string(from: entry.date)) \(marker) \(entry.message)"
-        }.joined(separator: "\n")
-    }
-}
-
