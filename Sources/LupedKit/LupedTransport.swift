@@ -189,12 +189,16 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// its user allowed muting from the watch.
     public var alertMuteRequested: ((TimeInterval) -> Void)?
     /// Called when the watch asks to add carbs (`COMMAND carbs:<grams>`), with
-    /// the grams the watch chose. The host runs its own checks.
-    public var carbsRequested: ((_ grams: Double) -> Void)?
+    /// the grams the watch chose and when the user confirmed them (see
+    /// `LupedCommandTiming`; `nil` when the command didn't say). The host runs
+    /// its own checks.
+    public var carbsRequested: ((_ grams: Double, _ requestedAt: Date?) -> Void)?
     /// Called when the watch asks for a bolus (`COMMAND bolus:<units>`, or
     /// `forcedbolus:<units>` to skip only the host's recommendation check), with
-    /// the units the watch chose. The host runs its own checks.
-    public var bolusRequested: ((_ units: Double, _ forced: Bool) -> Void)?
+    /// the units the watch chose and when the user confirmed them (see
+    /// `LupedCommandTiming`; `nil` when the command didn't say). The host runs
+    /// its own checks.
+    public var bolusRequested: ((_ units: Double, _ forced: Bool, _ requestedAt: Date?) -> Void)?
 
     private var latestPayload: LupedPayload?
     /// Incremented on every send request; a send completing with an older
@@ -442,14 +446,16 @@ public final class LupedTransport: PebbleTransportDelegate {
         if let command, command.hasPrefix("mute:"), let minutes = Int(command.dropFirst(5)), minutes > 0 {
             record(.fromWatch, "Watch asked to mute \(hostName) alerts for \(minutes) min (COMMAND \(command))")
             alertMuteRequested?(TimeInterval(minutes * 60))
-        } else if let command, let request = LupedWatchRequest(command: command) {
+        } else if let command, let request = LupedWatchRequest(command: LupedCommandTiming.stripped(command)) {
+            let requestedAt = LupedCommandTiming(command: command)?.requestedAt(receivedAt: Date())
+            let confirmed = requestedAt.map { String(format: ", confirmed %.0f s ago", Date().timeIntervalSince($0)) } ?? ", without the watch's timing"
             switch request {
             case .carbs(let grams?):
-                record(.fromWatch, String(format: "Watch asked to add %g g of carbs (COMMAND %@)", grams, command))
-                carbsRequested?(grams)
+                record(.fromWatch, String(format: "Watch asked to add %g g of carbs%@ (COMMAND %@)", grams, confirmed, command))
+                carbsRequested?(grams, requestedAt)
             case .bolus(let units?, let forced):
-                record(.fromWatch, String(format: "Watch asked for a %g U %@(COMMAND %@)", units, forced ? "forced bolus " : "bolus ", command))
-                bolusRequested?(units, forced)
+                record(.fromWatch, String(format: "Watch asked for a %g U %@%@ (COMMAND %@)", units, forced ? "forced bolus" : "bolus", confirmed, command))
+                bolusRequested?(units, forced, requestedAt)
             case .carbs(nil), .bolus(nil, _):
                 record(.error, "Watch request without a valid amount ignored (COMMAND \(command))")
                 sendResult("\(request.action):failed")
@@ -900,6 +906,40 @@ extension LupedWatchDiagnostics {
 /// A dosing request from the watch, with the amount it chose: `bolus:<units>`,
 /// `forcedbolus:<units>` or `carbs:<grams>`. The amount is `nil` when it is
 /// missing, not a number, or not above zero.
+/// When the user confirmed a watch command, from an optional suffix the watch
+/// adds to `COMMAND`: `<command>@<confirmedAt>,<sentAt>`, both whole seconds
+/// since 1970 by the watch's clock. `sentAt` is when the message actually went
+/// out (set again on each retry), so the time the command waited on the watch is
+/// `sentAt - confirmedAt` whatever the watch clock's offset, and the phone dates
+/// the command `receivedAt - (sentAt - confirmedAt)`. The radio transfer itself,
+/// normally well under a second, isn't counted.
+public struct LupedCommandTiming: Equatable {
+    public let confirmedAt: Int
+    public let sentAt: Int
+
+    /// `nil` when the command has no suffix, or one that isn't two whole numbers
+    /// with `sentAt` at or after `confirmedAt`.
+    public init?(command: String) {
+        guard let at = command.lastIndex(of: "@") else { return nil }
+        let parts = command[command.index(after: at)...].split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count == 2, let confirmedAt = Int(parts[0]), let sentAt = Int(parts[1]),
+              confirmedAt > 0, sentAt >= confirmedAt
+        else { return nil }
+        self.confirmedAt = confirmedAt
+        self.sentAt = sentAt
+    }
+
+    /// The command without its timing suffix.
+    public static func stripped(_ command: String) -> String {
+        command.lastIndex(of: "@").map { String(command[..<$0]) } ?? command
+    }
+
+    /// When the user confirmed the command, by the phone's clock.
+    public func requestedAt(receivedAt: Date) -> Date {
+        receivedAt.addingTimeInterval(-TimeInterval(sentAt - confirmedAt))
+    }
+}
+
 enum LupedWatchRequest: Equatable {
     case bolus(Double?, forced: Bool)
     case carbs(Double?)

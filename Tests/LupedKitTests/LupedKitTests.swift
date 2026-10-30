@@ -240,6 +240,26 @@ final class LupedWatchRequestTests: XCTestCase {
     }
 }
 
+final class LupedCommandTimingTests: XCTestCase {
+    // The watch adds when the user confirmed and when the message went out, by
+    // its own clock; only the difference is used, so the clock's offset cancels.
+    func testDatesTheCommandByTheTimeItWaitedOnTheWatch() throws {
+        let timing = try XCTUnwrap(LupedCommandTiming(command: "bolus:1.5@1798000000,1798000012"))
+        let receivedAt = Date(timeIntervalSince1970: 1_000_000)
+        XCTAssertEqual(timing.requestedAt(receivedAt: receivedAt), receivedAt.addingTimeInterval(-12))
+        XCTAssertEqual(LupedCommandTiming.stripped("bolus:1.5@1798000000,1798000012"), "bolus:1.5")
+        XCTAssertEqual(LupedWatchRequest(command: LupedCommandTiming.stripped("carbs:30@5,5")), .carbs(30))
+    }
+
+    func testCommandsWithoutValidTimingHaveNone() {
+        XCTAssertNil(LupedCommandTiming(command: "bolus:1.5"))
+        XCTAssertNil(LupedCommandTiming(command: "bolus:1.5@100"))
+        XCTAssertNil(LupedCommandTiming(command: "bolus:1.5@100,99"), "Sent before it was confirmed")
+        XCTAssertNil(LupedCommandTiming(command: "bolus:1.5@x,100"))
+        XCTAssertEqual(LupedCommandTiming.stripped("bolus:1.5"), "bolus:1.5")
+    }
+}
+
 final class LupedWatchDiagnosticsLogTests: XCTestCase {
     // A version-2 snapshot decodes one line per field, with the latency buckets
     // shown inline, and every field has a description.
