@@ -447,7 +447,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             record(.fromWatch, "Watch asked to mute \(hostName) alerts for \(minutes) min (COMMAND \(command))")
             alertMuteRequested?(TimeInterval(minutes * 60))
         } else if let command, let request = LupedWatchRequest(command: LupedCommandTiming.stripped(command)) {
-            let requestedAt = LupedCommandTiming(command: command)?.requestedAt(receivedAt: Date())
+            let requestedAt = LupedCommandTiming(command: command)?.confirmedAt
             let confirmed = requestedAt.map { String(format: ", confirmed %.0f s ago", Date().timeIntervalSince($0)) } ?? ", without the watch's timing"
             switch request {
             case .carbs(let grams?):
@@ -907,36 +907,23 @@ extension LupedWatchDiagnostics {
 /// `forcedbolus:<units>` or `carbs:<grams>`. The amount is `nil` when it is
 /// missing, not a number, or not above zero.
 /// When the user confirmed a watch command, from an optional suffix the watch
-/// adds to `COMMAND`: `<command>@<confirmedAt>,<sentAt>`, both whole seconds
-/// since 1970 by the watch's clock. `sentAt` is when the message actually went
-/// out (set again on each retry), so the time the command waited on the watch is
-/// `sentAt - confirmedAt` whatever the watch clock's offset, and the phone dates
-/// the command `receivedAt - (sentAt - confirmedAt)`. The radio transfer itself,
-/// normally well under a second, isn't counted.
+/// adds to `COMMAND`: `<command>@<confirmedAt>`, whole seconds since 1970 by the
+/// watch's clock, which the Pebble app keeps in step with the phone's. A resent
+/// command keeps its `confirmedAt`, so it ages like the original.
 public struct LupedCommandTiming: Equatable {
-    public let confirmedAt: Int
-    public let sentAt: Int
+    public let confirmedAt: Date
 
-    /// `nil` when the command has no suffix, or one that isn't two whole numbers
-    /// with `sentAt` at or after `confirmedAt`.
+    /// `nil` when the command has no suffix, or one that isn't a positive whole number.
     public init?(command: String) {
-        guard let at = command.lastIndex(of: "@") else { return nil }
-        let parts = command[command.index(after: at)...].split(separator: ",", omittingEmptySubsequences: false)
-        guard parts.count == 2, let confirmedAt = Int(parts[0]), let sentAt = Int(parts[1]),
-              confirmedAt > 0, sentAt >= confirmedAt
+        guard let at = command.lastIndex(of: "@"),
+              let seconds = Int(command[command.index(after: at)...]), seconds > 0
         else { return nil }
-        self.confirmedAt = confirmedAt
-        self.sentAt = sentAt
+        confirmedAt = Date(timeIntervalSince1970: TimeInterval(seconds))
     }
 
     /// The command without its timing suffix.
     public static func stripped(_ command: String) -> String {
         command.lastIndex(of: "@").map { String(command[..<$0]) } ?? command
-    }
-
-    /// When the user confirmed the command, by the phone's clock.
-    public func requestedAt(receivedAt: Date) -> Date {
-        receivedAt.addingTimeInterval(-TimeInterval(sentAt - confirmedAt))
     }
 }
 
