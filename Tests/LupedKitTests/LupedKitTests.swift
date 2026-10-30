@@ -241,15 +241,19 @@ final class LupedWatchRequestTests: XCTestCase {
     // The watch chooses the amount; anything that isn't a positive number is
     // kept as a request without an amount, so it can be answered "failed".
     func testParsesAmounts() {
-        XCTAssertEqual(LupedWatchRequest(command: "bolus:0.1"), .bolus(0.1, forced: false))
-        XCTAssertEqual(LupedWatchRequest(command: "forcedbolus:1.25"), .bolus(1.25, forced: true))
         XCTAssertEqual(LupedWatchRequest(command: "carbs:77"), .carbs(77))
         XCTAssertEqual(LupedWatchRequest(command: "carbs"), .carbs(nil))
-        XCTAssertEqual(LupedWatchRequest(command: "bolus:-1"), .bolus(nil, forced: false))
-        XCTAssertEqual(LupedWatchRequest(command: "bolus:abc"), .bolus(nil, forced: false))
+        XCTAssertEqual(LupedWatchRequest(command: "carbs:-1"), .carbs(nil))
         XCTAssertNil(LupedWatchRequest(command: "refresh"))
         XCTAssertNil(LupedWatchRequest(command: "mute:30"))
-        XCTAssertEqual(LupedWatchRequest(command: "forcedbolus:x")?.action, "forcedbolus")
+    }
+
+    // Boluses are only ever signed: the unsigned forms are no request at all.
+    func testUnsignedBolusesAreNotRequests() {
+        XCTAssertNil(LupedWatchRequest(command: "bolus:0.1"))
+        XCTAssertNil(LupedWatchRequest(command: "forcedbolus:1.25"))
+        XCTAssertFalse(LupedSignedBolus.isSigned("bolus:0.1@1798000000"))
+        XCTAssertFalse(LupedSignedBolus.isSigned("forcedbolus:0.1"))
     }
 }
 

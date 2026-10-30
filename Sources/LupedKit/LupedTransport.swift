@@ -200,12 +200,27 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// `LupedCommandTiming`; `nil` when the command didn't say). The host runs
     /// its own checks.
     public var carbsRequested: ((_ grams: Double, _ requestedAt: Date?) -> Void)?
-    /// Called when the watch asks for a bolus (`COMMAND bolus:<units>`, or
-    /// `forcedbolus:<units>` to skip only the host's recommendation check), with
-    /// the units the watch chose and when the user confirmed them (see
-    /// `LupedCommandTiming`; `nil` when the command didn't say). The host runs
-    /// its own checks.
-    public var bolusRequested: ((_ units: Double, _ forced: Bool, _ requestedAt: Date?) -> Void)?
+    /// Called once for each signed bolus request from the watch that passed
+    /// `LupedBolusAuth` (`COMMAND signedbolus:<units>[:<grams>]…`, or
+    /// `signedforcedbolus:` to skip only the host's recommendation check), with
+    /// the units, the carbs to add first (`nil` for none) and when the user
+    /// confirmed them. There is no unsigned bolus request. The host runs its own checks. Answer with `sendResult`
+    /// (`carbs:<outcome>` first when there were carbs, then
+    /// `signedbolus:<outcome>` or `signedforcedbolus:<outcome>`), so a resent
+    /// request gets the same answer.
+    public var bolusRequested: ((_ units: Double, _ forced: Bool, _ grams: Double?, _ requestedAt: Date) -> Void)?
+    /// Whether to hand the watch a bolus session key. Off unless the host may
+    /// take boluses from this watch; turning it off forgets the key.
+    public var issuesBolusKey = false {
+        didSet {
+            guard issuesBolusKey != oldValue else { return }
+            if issuesBolusKey {
+                startBolusSession()
+            } else {
+                endBolusSession()
+            }
+        }
+    }
 
     private var latestPayload: LupedPayload?
     /// Incremented on every send request; a send completing with an older
@@ -232,6 +247,9 @@ public final class LupedTransport: PebbleTransportDelegate {
     private var diagnosticsRequested = false
     /// Outcomes of the watch's requests waiting to go back to it (`RESULT`), oldest first.
     private var pendingResults: [String] = []
+    private var bolusAuth = LupedBolusAuth()
+    /// The `COMMAND auth:…` handing the watch its bolus session key, until sent.
+    private var pendingBolusKey: String?
     private var diagnosticsReplyTimeout: Task<Void, Never>?
     private var pushAckTimeout: Task<Void, Never>?
     private var retryDelay: TimeInterval = 0
@@ -381,6 +399,7 @@ public final class LupedTransport: PebbleTransportDelegate {
 
         guard enabled else {
             // Fully off: no Bluetooth manager, no retries, no payload building.
+            endBolusSession()
             pushRetry?.cancel()
             pushRetry = nil
             latestPayload = nil
@@ -409,6 +428,9 @@ public final class LupedTransport: PebbleTransportDelegate {
     }
 
     public func pebbleTransportSessionDidOpen(_ transport: PebbleTransport) {
+        if issuesBolusKey {
+            startBolusSession()
+        }
         sendIfNeeded(force: true)
     }
 
@@ -430,12 +452,18 @@ public final class LupedTransport: PebbleTransportDelegate {
         paused = false
         status.retryAt = nil
         inflightCommand = nil
+        endBolusSession()
     }
 
     public func pebbleTransport(_ transport: PebbleTransport, didReceive tuples: [UInt32: AppMessageTuple], message: [UInt8]) {
         resendIfCrossed()
         if tuples[PebbleAppMessage.alloyReadyKey] != nil {
             dropMessagesToPreviousWatchface()
+            // A new watchface run has no key: give it a new one, so nothing the
+            // previous run signed is accepted any more.
+            if issuesBolusKey {
+                startBolusSession()
+            }
         }
         let hex = PebbleTransport.hex(message.dropFirst(18))
         if let diagnostics = tuples[LupedMessageKey.diagnostics]?.string {
@@ -459,6 +487,8 @@ public final class LupedTransport: PebbleTransportDelegate {
             let requestedAt = LupedCommandTiming(command: command)?.confirmedAt
             record(.fromWatch, "Watch asked to mute \(hostName) alerts for \(minutes) min\(requestedAt == nil ? ", without the watch's timing" : "") (COMMAND \(command))")
             alertMuteRequested?(TimeInterval(minutes * 60), requestedAt)
+        } else if let command, LupedSignedBolus.isSigned(command) {
+            handleSignedBolus(command)
         } else if let command, let base, let request = LupedWatchRequest(command: base) {
             let requestedAt = LupedCommandTiming(command: command)?.confirmedAt
             let confirmed = requestedAt.map { String(format: ", confirmed %.0f s ago", Date().timeIntervalSince($0)) } ?? ", without the watch's timing"
@@ -466,10 +496,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             case .carbs(let grams?):
                 record(.fromWatch, String(format: "Watch asked to add %g g of carbs%@ (COMMAND %@)", grams, confirmed, command))
                 carbsRequested?(grams, requestedAt)
-            case .bolus(let units?, let forced):
-                record(.fromWatch, String(format: "Watch asked for a %g U %@%@ (COMMAND %@)", units, forced ? "forced bolus" : "bolus", confirmed, command))
-                bolusRequested?(units, forced, requestedAt)
-            case .carbs(nil), .bolus(nil, _):
+            case .carbs(nil):
                 record(.error, "Watch request without a valid amount ignored (COMMAND \(command))")
                 sendResult("\(request.action):failed")
             }
@@ -605,10 +632,15 @@ public final class LupedTransport: PebbleTransportDelegate {
     }
 
     /// Tells the watch how one of its requests ended (`RESULT`), kept short as
-    /// `<action>:<outcome>`, e.g. `mute:ok` or `bolus:refused`, so the watchface
-    /// can react to it. The reason goes to the communication log.
+    /// `<action>:<outcome>`, e.g. `mute:ok` or `signedbolus:refused`, so the
+    /// watchface can react to it. The reason goes to the communication log.
     /// Sent after any pending reading; the last few are kept until a session opens.
     public func sendResult(_ result: String) {
+        bolusAuth.record(result: result)
+        queueResult(result)
+    }
+
+    private func queueResult(_ result: String) {
         pendingResults.append(result)
         if pendingResults.count > 5 {
             pendingResults.removeFirst(pendingResults.count - 5)
@@ -616,12 +648,61 @@ public final class LupedTransport: PebbleTransportDelegate {
         sendIfNeeded()
     }
 
+    // MARK: - Signed boluses
+
+    /// Gives the watch a new bolus session key, replacing any earlier one.
+    private func startBolusSession() {
+        pendingBolusKey = bolusAuth.newSession()
+        record(.info, "New bolus session \(bolusAuth.session?.id ?? ""): requests signed with an earlier key are refused")
+        sendIfNeeded()
+    }
+
+    private func endBolusSession() {
+        guard bolusAuth.session != nil || pendingBolusKey != nil else { return }
+        record(.info, "Bolus session \(bolusAuth.session?.id ?? "") ended: signed bolus requests are refused until the watch gets a new key")
+        bolusAuth.endSession()
+        pendingBolusKey = nil
+    }
+
+    /// Passes a signed bolus request on once, if `LupedBolusAuth` accepts it; a
+    /// resend of a handled one gets its results again.
+    private func handleSignedBolus(_ command: String) {
+        let action = LupedSignedBolus.actions.first { command.hasPrefix($0 + ":") } ?? "signedbolus"
+        guard let request = LupedSignedBolus(command: command) else {
+            record(.error, "Signed bolus request refused: malformed (COMMAND \(command))")
+            queueResult("\(action):refused")
+            return
+        }
+        switch bolusAuth.verify(request, now: Date()) {
+        case .accept(let request):
+            let carbs = request.grams.map { String(format: " with %g g of carbs", $0) } ?? ""
+            let confirmed = String(format: "confirmed %.0f s ago", Date().timeIntervalSince(request.confirmedAt))
+            record(.fromWatch, String(format: "Watch asked for a %@ U %@%@, %@, signature valid (session %@, #%d)", request.unitsText, request.forced ? "forced bolus" : "bolus", carbs, confirmed, request.sessionID, request.sequence))
+            bolusRequested?(request.units, request.forced, request.grams, request.confirmedAt)
+        case .resend(let results):
+            record(.info, "Signed bolus request #\(request.sequence) already handled: its result sent again, not passed on")
+            results.forEach(queueResult)
+        case .inProgress:
+            record(.info, "Signed bolus request #\(request.sequence) is still being handled: its result follows")
+        case .refuse(let reason):
+            record(.error, "Signed bolus request refused: \(reason) (COMMAND \(command))")
+            queueResult("\(action):refused")
+        }
+    }
+
     private func sendPendingCommand() {
-        guard diagnosticsRequested || !pendingResults.isEmpty, inflightPush == nil, inflightCommand == nil, transport.isSessionOpen else {
+        guard pendingBolusKey != nil || diagnosticsRequested || !pendingResults.isEmpty, inflightPush == nil, inflightCommand == nil, transport.isSessionOpen else {
             return
         }
         let transactionID = transport.makeTransactionID()
-        if diagnosticsRequested {
+        if let key = pendingBolusKey {
+            pendingBolusKey = nil
+            // The key itself never goes in a log.
+            let label = "COMMAND auth (bolus session \(bolusAuth.session?.id ?? ""))"
+            inflightCommand = (transactionID, label)
+            record(.toWatch, "#\(transactionID) \(label)")
+            transport.push(transactionID: transactionID, tuples: [(LupedMessageKey.command, .cString(key))])
+        } else if diagnosticsRequested {
             diagnosticsRequested = false
             inflightCommand = (transactionID, "COMMAND diagnostics")
             record(.toWatch, "#\(transactionID) COMMAND diagnostics")
@@ -934,9 +1015,6 @@ extension LupedWatchDiagnostics {
     }
 }
 
-/// A dosing request from the watch, with the amount it chose: `bolus:<units>`,
-/// `forcedbolus:<units>` or `carbs:<grams>`. The amount is `nil` when it is
-/// missing, not a number, or not above zero.
 /// When the user confirmed a watch command, from an optional suffix the watch
 /// adds to `COMMAND`: `<command>@<confirmedAt>`, whole seconds since 1970 by the
 /// watch's clock, which the Pebble app keeps in step with the phone's. A resent
@@ -958,27 +1036,20 @@ public struct LupedCommandTiming: Equatable {
     }
 }
 
+/// An unsigned dosing request from the watch: `carbs:<grams>`, with `nil` when
+/// the amount is missing, not a number, or not above zero. Boluses are only
+/// ever signed (`LupedSignedBolus`).
 enum LupedWatchRequest: Equatable {
-    case bolus(Double?, forced: Bool)
     case carbs(Double?)
 
     init?(command: String) {
         let parts = command.split(separator: ":", maxSplits: 1).map(String.init)
         let amount = parts.count == 2 ? Double(parts[1]).flatMap { $0.isFinite && $0 > 0 ? $0 : nil } : nil
-        switch parts[0] {
-        case "bolus": self = .bolus(amount, forced: false)
-        case "forcedbolus": self = .bolus(amount, forced: true)
-        case "carbs": self = .carbs(amount)
-        default: return nil
-        }
+        guard parts[0] == "carbs" else { return nil }
+        self = .carbs(amount)
     }
 
-    var action: String {
-        switch self {
-        case .bolus(_, let forced): return forced ? "forcedbolus" : "bolus"
-        case .carbs: return "carbs"
-        }
-    }
+    var action: String { "carbs" }
 }
 
 /// An alert fire the watch acknowledged: a changed alert event at a level above 0.
