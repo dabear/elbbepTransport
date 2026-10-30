@@ -158,15 +158,15 @@ final class LupedPayloadTests: XCTestCase {
 
     // Index 15 names the app sending DATA; the watch reads only indexes 0-14,
     // so it ignores it until a watchface uses it.
-    func testDataEndsWithTheHostID() throws {
+    func testDataEndsWithTheHostName() throws {
         let readings = [LupedReading(date: start, milligramsPerDeciliter: 120, trend: nil)]
-        let payload = try XCTUnwrap(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, hostID: "a1b2c3d4"))
+        let payload = try XCTUnwrap(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, hostName: "Trio"))
         let values = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(payload.data.utf8)) as? [Any])
         XCTAssertEqual(values.count, 16)
-        XCTAssertEqual(values[15] as? String, "a1b2c3d4")
-        XCTAssertTrue(payload.logDetails.contains("host id (the app sending this)"), payload.logDetails)
-        let withoutID = try XCTUnwrap(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false))
-        XCTAssertEqual((try JSONSerialization.jsonObject(with: Data(withoutID.data.utf8)) as? [Any])?.count, 15)
+        XCTAssertEqual(values[15] as? String, "Trio")
+        XCTAssertTrue(payload.logDetails.contains("host app (the app sending this)"), payload.logDetails)
+        let withoutName = try XCTUnwrap(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false))
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: Data(withoutName.data.utf8)) as? [Any])?.count, 15)
     }
 
     // A 1-minute CGM: the graph still covers an hour (one value every 5 minutes,

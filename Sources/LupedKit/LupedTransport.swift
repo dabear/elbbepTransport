@@ -158,7 +158,8 @@ public struct LupedLoopStatus: Equatable {
 /// immediately on a glucose update, a watchface refresh, or a new session.
 @MainActor
 public final class LupedTransport: PebbleTransportDelegate {
-    /// The host app's name in log lines, such as "Loop" or "Trio".
+    /// The host app's name, such as "Loop" or "Trio": in log lines, and sent as
+    /// `DATA` index 15 so a watch can tell two apps on the same phone apart.
     public let hostName: String
     private let transport: PebbleTransport
 
@@ -200,9 +201,6 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// `LupedCommandTiming`; `nil` when the command didn't say). The host runs
     /// its own checks.
     public var bolusRequested: ((_ units: Double, _ forced: Bool, _ requestedAt: Date?) -> Void)?
-    /// Identifies the app sending `DATA` (index 15), so a watch can tell two apps
-    /// on the same phone apart. Stable for the app; set before `start()`.
-    public var hostID: String?
 
     private var latestPayload: LupedPayload?
     /// Incremented on every send request; a send completing with an older
@@ -278,7 +276,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             return
         }
 
-        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertState: snapshot.hostAlertState, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: settings.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(settings.shownStatusLine, therapy: snapshot.therapy, unit: snapshot.unit), hostID: hostID, settings: settings) else {
+        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertState: snapshot.hostAlertState, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: settings.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(settings.shownStatusLine, therapy: snapshot.therapy, unit: snapshot.unit), hostName: hostName, settings: settings) else {
             record(.info, String(format: "No usable CGM readings among %ld stored samples; nothing to send", snapshot.storedSampleCount))
             return
         }

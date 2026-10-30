@@ -129,7 +129,7 @@ public struct LupedPayload: Equatable {
     /// `settings` lets the log decode say why a loop status or status line field is
     /// `null`: the user's Layout, Status Line and Last Loop choices, or a value the host
     /// didn't provide.
-    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil, hostID: String? = nil, settings: LupedSettings = LupedSettings()) {
+    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil, hostName: String? = nil, settings: LupedSettings = LupedSettings()) {
         let readings = Self.graphReadings(readings, limit: 12)
         guard let latest = readings.last else {
             return nil
@@ -169,10 +169,10 @@ public struct LupedPayload: Equatable {
             (loopStatus?.isClosedLoop.map { $0 ? 1 : 0 } ?? NSNull(), loopStatus?.isClosedLoop.map { $0 ? "closed loop" : "open loop" } ?? "closed or open loop" + Self.notSent(insulinAndCarbs: false, settings: settings)),
             (statusLine ?? NSNull(), Self.statusLineDescription(statusLine, settings: settings)),
         ]
-        // Index 15, when set, names the app on the phone sending this, so a watch can
+        // Index 15, when set, is the name of the app on the phone sending this, so a watch can
         // tell two apps apart.
-        if let hostID {
-            fields.append((hostID, "host id (the app sending this)"))
+        if let hostName {
+            fields.append((hostName, "host app (the app sending this)"))
         }
         let message = fields.map(\.value)
 
