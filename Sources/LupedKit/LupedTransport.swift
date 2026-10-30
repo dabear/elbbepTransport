@@ -519,6 +519,11 @@ public final class LupedTransport: PebbleTransportDelegate {
                 } else {
                     awaitDiagnosticsReply()
                 }
+            } else if acknowledged, let id = Self.bolusSessionID(inLabel: pending.command) {
+                bolusAuth.keyDelivered(session: id)
+                record(.info, "Watch has the key for bolus session \(id): it can sign bolus requests")
+            } else if !acknowledged {
+                noteUndelivered(pending.command, "the watch rejected it")
             }
             sendIfNeeded()
             return
@@ -643,7 +648,9 @@ public final class LupedTransport: PebbleTransportDelegate {
     private func queueResult(_ result: String) {
         pendingResults.append(result)
         if pendingResults.count > 5 {
-            pendingResults.removeFirst(pendingResults.count - 5)
+            let dropped = pendingResults.prefix(pendingResults.count - 5)
+            pendingResults.removeFirst(dropped.count)
+            record(.error, "RESULT \(dropped.joined(separator: ", ")) dropped: more than 5 results were waiting for the watch")
         }
         sendIfNeeded()
     }
@@ -652,6 +659,7 @@ public final class LupedTransport: PebbleTransportDelegate {
 
     /// Gives the watch a new bolus session key, replacing any earlier one.
     private func startBolusSession() {
+        noteUnansweredBolus()
         pendingBolusKey = bolusAuth.newSession()
         record(.info, "New bolus session \(bolusAuth.session?.id ?? ""): requests signed with an earlier key are refused")
         sendIfNeeded()
@@ -659,9 +667,34 @@ public final class LupedTransport: PebbleTransportDelegate {
 
     private func endBolusSession() {
         guard bolusAuth.session != nil || pendingBolusKey != nil else { return }
+        noteUnansweredBolus()
         record(.info, "Bolus session \(bolusAuth.session?.id ?? "") ended: signed bolus requests are refused until the watch gets a new key")
         bolusAuth.endSession()
         pendingBolusKey = nil
+    }
+
+    /// A request passed on without a bolus result yet can't be answered once its
+    /// session ends: say so, as the watch won't hear more of it.
+    private func noteUnansweredBolus() {
+        if let sequence = bolusAuth.unansweredSequence, let id = bolusAuth.session?.id {
+            record(.error, "Signed bolus request #\(sequence) (session \(id)) had no result from \(hostName) when its session ended; check \(hostName)'s history before asking again")
+        }
+    }
+
+    /// The log label of the `COMMAND auth` push for a session.
+    private static func bolusKeyLabel(_ id: String) -> String {
+        "COMMAND auth (bolus session \(id))"
+    }
+
+    private static func bolusSessionID(inLabel label: String) -> String? {
+        let prefix = "COMMAND auth (bolus session "
+        guard label.hasPrefix(prefix), label.hasSuffix(")") else { return nil }
+        return String(label.dropFirst(prefix.count).dropLast())
+    }
+
+    private func bolusKeyNotDelivered(_ id: String, _ reason: String) {
+        guard bolusAuth.session?.id == id else { return }
+        record(.error, "Bolus session \(id) key not delivered (\(reason)): the watch's signed bolus requests are refused until the watchface starts again and gets a new key")
     }
 
     /// Passes a signed bolus request on once, if `LupedBolusAuth` accepts it; a
@@ -685,7 +718,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         case .inProgress:
             record(.info, "Signed bolus request #\(request.sequence) is still being handled: its result follows")
         case .refuse(let reason):
-            record(.error, "Signed bolus request refused: \(reason) (COMMAND \(command))")
+            record(.error, "Signed bolus request refused: \(reason)\(bolusAuth.keyNote(issuingKeys: issuesBolusKey)) (COMMAND \(command))")
             queueResult("\(action):refused")
         }
     }
@@ -698,7 +731,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         if let key = pendingBolusKey {
             pendingBolusKey = nil
             // The key itself never goes in a log.
-            let label = "COMMAND auth (bolus session \(bolusAuth.session?.id ?? ""))"
+            let label = Self.bolusKeyLabel(bolusAuth.session?.id ?? "")
             inflightCommand = (transactionID, label)
             record(.toWatch, "#\(transactionID) \(label)")
             transport.push(transactionID: transactionID, tuples: [(LupedMessageKey.command, .cString(key))])
@@ -716,10 +749,20 @@ public final class LupedTransport: PebbleTransportDelegate {
 
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(PebbleAppMessage.ackTimeout * 1_000_000_000))
-            guard let self, self.inflightCommand?.transactionID == transactionID else { return }
+            guard let self, let pending = self.inflightCommand, pending.transactionID == transactionID else { return }
             self.record(.error, "#\(transactionID) no reply within \(Int(PebbleAppMessage.ackTimeout)) s")
+            self.noteUndelivered(pending.command, "no reply")
             self.inflightCommand = nil
             self.sendIfNeeded()
+        }
+    }
+
+    /// Says what is lost when the watch didn't take a key or a result.
+    private func noteUndelivered(_ label: String, _ reason: String) {
+        if let id = Self.bolusSessionID(inLabel: label) {
+            bolusKeyNotDelivered(id, reason)
+        } else if let result = LupedDelivery.resultToResend(afterRestart: label) {
+            record(.error, "RESULT \(result) not delivered (\(reason)): the watch won't show this outcome; it's in this log")
         }
     }
 

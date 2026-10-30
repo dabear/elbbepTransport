@@ -102,6 +102,30 @@ final class LupedBolusAuthTests: XCTestCase {
         XCTAssertTrue(isRefused(verify(command(session: "fedcba9876543210"), with: &auth)))
     }
 
+    // A refusal's log says why the watch may have no valid key.
+    func testKeyNoteSaysWhyTheWatchMayHaveNoKey() {
+        var auth = LupedBolusAuth()
+        XCTAssertEqual(auth.keyNote(issuingKeys: false), "; no key is issued: remote bolus is off for this watch")
+        XCTAssertEqual(auth.keyNote(issuingKeys: true), "; no key yet: there is no watch session")
+        _ = auth.newSession(id: sessionID, key: key)
+        XCTAssertEqual(auth.keyNote(issuingKeys: true), "; the watch hasn't acknowledged the key for session \(sessionID)")
+        auth.keyDelivered(session: "fedcba9876543210")
+        XCTAssertFalse(auth.session?.keyDelivered ?? true, "An older session's ACK doesn't count")
+        auth.keyDelivered(session: sessionID)
+        XCTAssertEqual(auth.keyNote(issuingKeys: true), "")
+    }
+
+    func testARequestWithoutABolusResultIsUnanswered() {
+        var auth = auth()
+        XCTAssertNil(auth.unansweredSequence)
+        guard case .accept = verify(command(sequence: 3), with: &auth) else { return XCTFail("Not accepted") }
+        XCTAssertEqual(auth.unansweredSequence, 3)
+        auth.record(result: "carbs:ok")
+        XCTAssertEqual(auth.unansweredSequence, 3, "Carbs alone don't answer it")
+        auth.record(result: "signedbolus:ok")
+        XCTAssertNil(auth.unansweredSequence)
+    }
+
     // MARK: - Signature
 
     func testRefusesAWrongSignature() {

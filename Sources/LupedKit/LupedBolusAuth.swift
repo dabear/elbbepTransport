@@ -96,6 +96,8 @@ struct LupedBolusAuth {
     struct Session {
         let id: String
         let key: SymmetricKey
+        /// Whether the watch acknowledged the key.
+        var keyDelivered = false
         var lastSequence = 0
         /// The request being handled, with the results it has produced so far.
         var open: (sequence: Int, wantsCarbs: Bool, results: [String])?
@@ -118,6 +120,27 @@ struct LupedBolusAuth {
     /// Forgets the key: no request is accepted until the next session.
     mutating func endSession() {
         session = nil
+    }
+
+    /// The watch acknowledged the key for session `id` (ignored if a newer session replaced it).
+    mutating func keyDelivered(session id: String) {
+        guard session?.id == id else { return }
+        session?.keyDelivered = true
+    }
+
+    /// The request that was passed on but has no bolus result yet, if any.
+    var unansweredSequence: Int? { session?.open?.sequence }
+
+    /// Why the watch may hold no valid key, for the log of a refused request:
+    /// empty when the current key reached the watch.
+    func keyNote(issuingKeys: Bool) -> String {
+        guard issuingKeys else {
+            return "; no key is issued: remote bolus is off for this watch"
+        }
+        guard let session else {
+            return "; no key yet: there is no watch session"
+        }
+        return session.keyDelivered ? "" : "; the watch hasn't acknowledged the key for session \(session.id)"
     }
 
     mutating func verify(_ request: LupedSignedBolus, now: Date) -> Verdict {
