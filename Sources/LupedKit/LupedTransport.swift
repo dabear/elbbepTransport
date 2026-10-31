@@ -430,6 +430,10 @@ public final class LupedTransport: PebbleTransportDelegate {
         } else if tuples[PebbleAppMessage.alloyReadyKey] != nil || command == "refresh" {
             record(.fromWatch, "Watchface requested refresh (\(command.map { "COMMAND \($0)" } ?? "ready handshake"))\n" + LupedPayload.alignedRows([("tuples", hex)]))
             sendIfNeeded(force: true)
+        } else if let command {
+            // An action this plugin doesn't take (`bolus:` is gone, presets were
+            // never offered) or a malformed one: nothing is passed to the host.
+            record(.error, "Watch command ignored: this plugin doesn't handle it (COMMAND \(command))\n" + LupedPayload.alignedRows([("tuples", hex)]))
         } else if tuples[LupedMessageKey.diagnostics] == nil {
             record(.fromWatch, "Watch message\n" + LupedPayload.alignedRows([("tuples", hex)]))
         }
