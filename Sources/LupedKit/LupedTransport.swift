@@ -127,11 +127,15 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// `LupedCommandTiming`; `nil` when the command didn't say). The host runs
     /// its own checks.
     public var carbsRequested: ((_ grams: Double, _ requestedAt: Date?) -> Void)?
-    /// Called when the watch asks to start a preset (`COMMAND override:<preset
-    /// name or id>`) or end the running one (`override:cancel`), with when the
-    /// user confirmed it (see `LupedCommandTiming`; `nil` when the command didn't
-    /// say). Without it, the request is logged and answered `override:ignored`.
-    public var overrideRequested: ((_ action: LupedOverrideAction, _ requestedAt: Date?) -> Void)?
+    /// Called when the watch asks to start an override preset (`COMMAND
+    /// override:<preset name or id>`) or end the running one (`override:cancel`),
+    /// with when the user confirmed it (see `LupedCommandTiming`; `nil` when the
+    /// command didn't say). Without it, the request is logged and answered
+    /// `override:ignored`.
+    public var overrideRequested: ((_ action: LupedPresetAction, _ requestedAt: Date?) -> Void)?
+    /// The same for temp target presets (`COMMAND temptarget:<preset name or
+    /// id>`, `temptarget:cancel`), answered `temptarget:ignored` without it.
+    public var tempTargetRequested: ((_ action: LupedPresetAction, _ requestedAt: Date?) -> Void)?
     /// Called once for each signed bolus request from the watch that passed
     /// `LupedBolusAuth` (`COMMAND signedbolus:<units>[:<grams>]…`, or
     /// `signedforcedbolus:` to skip only the host's recommendation check), with
@@ -415,44 +419,16 @@ public final class LupedTransport: PebbleTransportDelegate {
         // latest reading.
         let command = tuples[LupedMessageKey.command]?.string
         let base = command.map(LupedCommandTiming.stripped)
-        if let command, let base, base.hasPrefix("mute:"), let minutes = Int(base.dropFirst(5)), minutes > 0 {
-            let requestedAt = LupedCommandTiming(command: command)?.confirmedAt
-            record(.fromWatch, "Watch asked to mute \(hostName) alerts for \(minutes) min\(requestedAt == nil ? ", without the watch's timing" : "") (COMMAND \(command))")
-            alertMuteRequested?(TimeInterval(minutes * 60), requestedAt)
-        } else if let command, LupedSignedBolus.isSigned(command) {
+        if let command, LupedSignedBolus.isSigned(command) {
             handleSignedBolus(command)
         } else if let command, let base, let request = LupedWatchRequest(command: base) {
-            let requestedAt = LupedCommandTiming(command: command)?.confirmedAt
-            let confirmed = requestedAt.map { String(format: ", confirmed %.0f s ago", Date().timeIntervalSince($0)) } ?? ", without the watch's timing"
-            switch request {
-            case .carbs(let grams?):
-                record(.fromWatch, String(format: "Watch asked to add %g g of carbs%@ (COMMAND %@)", grams, confirmed, command))
-                carbsRequested?(grams, requestedAt)
-            case .carbs(nil):
-                record(.error, "Watch request without a valid amount ignored (COMMAND \(command))")
-                sendResult("\(request.action):failed")
-            case .override(let action?):
-                let asked = switch action {
-                case .start(let preset): "start the preset \"\(preset)\""
-                case .cancel: "end the running preset"
-                }
-                guard let overrideRequested else {
-                    record(.error, "Watch asked to \(asked)\(confirmed): ignored, this plugin doesn't take preset requests (COMMAND \(command))")
-                    sendResult("\(request.action):ignored")
-                    break
-                }
-                record(.fromWatch, "Watch asked to \(asked)\(confirmed) (COMMAND \(command))")
-                overrideRequested(action, requestedAt)
-            case .override(nil):
-                record(.error, "Watch preset request without a preset ignored (COMMAND \(command))")
-                sendResult("\(request.action):failed")
-            }
+            handleWatchRequest(request, command: command)
         } else if tuples[PebbleAppMessage.alloyReadyKey] != nil || command == "refresh" {
             record(.fromWatch, "Watchface requested refresh (\(command.map { "COMMAND \($0)" } ?? "ready handshake"))\n" + LupedPayload.alignedRows([("tuples", hex)]))
             sendIfNeeded(force: true)
         } else if let command {
-            // An action this plugin doesn't take (`bolus:` is gone, presets were
-            // never offered) or a malformed one: nothing is passed to the host.
+            // An action LupedKit doesn't know (`bolus:` is gone) or a malformed
+            // one: nothing is passed to the host.
             record(.error, "Watch command ignored: this plugin doesn't handle it (COMMAND \(command))\n" + LupedPayload.alignedRows([("tuples", hex)]))
         } else if tuples[LupedMessageKey.diagnostics] == nil {
             record(.fromWatch, "Watch message\n" + LupedPayload.alignedRows([("tuples", hex)]))

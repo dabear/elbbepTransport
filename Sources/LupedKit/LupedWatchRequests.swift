@@ -21,40 +21,50 @@ public struct LupedCommandTiming: Equatable {
     }
 }
 
-/// An unsigned request from the watch: `carbs:<grams>`, with `nil` when the
-/// amount is missing, not a number, or not above zero; or
-/// `override:<preset name or id>` to start a preset and `override:cancel` to end
-/// the running one, with `nil` when the preset is missing. Boluses are only ever
-/// signed (`LupedSignedBolus`).
+/// An unsigned request from the watch, `nil` inside when its argument is
+/// missing or invalid: `mute:<minutes>` (above zero), `carbs:<grams>` (above
+/// zero), `override:<preset name or id>` or `override:cancel`, and
+/// `temptarget:<preset name or id>` or `temptarget:cancel`. Boluses are only
+/// ever signed (`LupedSignedBolus`).
 enum LupedWatchRequest: Equatable {
+    case mute(minutes: Int?)
     case carbs(Double?)
-    case override(LupedOverrideAction?)
+    case override(LupedPresetAction?)
+    case tempTarget(LupedPresetAction?)
 
     init?(command: String) {
         let parts = command.split(separator: ":", maxSplits: 1).map(String.init)
         let argument = parts.count == 2 ? parts[1] : nil
+        let preset = argument.flatMap { $0 == "cancel" ? LupedPresetAction.cancel : $0.isEmpty ? nil : .start($0) }
         switch parts.first {
+        case "mute":
+            self = .mute(minutes: argument.flatMap { Int($0) }.flatMap { $0 > 0 ? $0 : nil })
         case "carbs":
             self = .carbs(argument.flatMap(Double.init).flatMap { $0.isFinite && $0 > 0 ? $0 : nil })
         case "override":
-            self = .override(argument.flatMap { $0 == "cancel" ? .cancel : $0.isEmpty ? nil : .start($0) })
+            self = .override(preset)
+        case "temptarget":
+            self = .tempTarget(preset)
         default:
             return nil
         }
     }
 
+    /// The `<action>` of the request's `RESULT`.
     var action: String {
         switch self {
+        case .mute: "mute"
         case .carbs: "carbs"
         case .override: "override"
+        case .tempTarget: "temptarget"
         }
     }
 }
 
-/// What a watch's `override:` request asks for.
-public enum LupedOverrideAction: Equatable, Sendable {
+/// What a watch's `override:` or `temptarget:` request asks for.
+public enum LupedPresetAction: Equatable, Sendable {
     /// Start the preset with this name or id.
     case start(String)
-    /// End the running preset.
+    /// End the running one.
     case cancel
 }
