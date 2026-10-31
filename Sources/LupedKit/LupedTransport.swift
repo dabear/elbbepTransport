@@ -127,6 +127,11 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// `LupedCommandTiming`; `nil` when the command didn't say). The host runs
     /// its own checks.
     public var carbsRequested: ((_ grams: Double, _ requestedAt: Date?) -> Void)?
+    /// Called when the watch asks to start a preset (`COMMAND override:<preset
+    /// name or id>`) or end the running one (`override:cancel`), with when the
+    /// user confirmed it (see `LupedCommandTiming`; `nil` when the command didn't
+    /// say). Without it, the request is logged and answered `override:ignored`.
+    public var overrideRequested: ((_ action: LupedOverrideAction, _ requestedAt: Date?) -> Void)?
     /// Called once for each signed bolus request from the watch that passed
     /// `LupedBolusAuth` (`COMMAND signedbolus:<units>[:<grams>]…`, or
     /// `signedforcedbolus:` to skip only the host's recommendation check), with
@@ -425,6 +430,21 @@ public final class LupedTransport: PebbleTransportDelegate {
                 carbsRequested?(grams, requestedAt)
             case .carbs(nil):
                 record(.error, "Watch request without a valid amount ignored (COMMAND \(command))")
+                sendResult("\(request.action):failed")
+            case .override(let action?):
+                let asked = switch action {
+                case .start(let preset): "start the preset \"\(preset)\""
+                case .cancel: "end the running preset"
+                }
+                guard let overrideRequested else {
+                    record(.error, "Watch asked to \(asked)\(confirmed): ignored, this plugin doesn't take preset requests (COMMAND \(command))")
+                    sendResult("\(request.action):ignored")
+                    break
+                }
+                record(.fromWatch, "Watch asked to \(asked)\(confirmed) (COMMAND \(command))")
+                overrideRequested(action, requestedAt)
+            case .override(nil):
+                record(.error, "Watch preset request without a preset ignored (COMMAND \(command))")
                 sendResult("\(request.action):failed")
             }
         } else if tuples[PebbleAppMessage.alloyReadyKey] != nil || command == "refresh" {

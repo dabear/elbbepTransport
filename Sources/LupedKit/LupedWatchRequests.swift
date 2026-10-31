@@ -21,18 +21,40 @@ public struct LupedCommandTiming: Equatable {
     }
 }
 
-/// An unsigned dosing request from the watch: `carbs:<grams>`, with `nil` when
-/// the amount is missing, not a number, or not above zero. Boluses are only
-/// ever signed (`LupedSignedBolus`).
+/// An unsigned request from the watch: `carbs:<grams>`, with `nil` when the
+/// amount is missing, not a number, or not above zero; or
+/// `override:<preset name or id>` to start a preset and `override:cancel` to end
+/// the running one, with `nil` when the preset is missing. Boluses are only ever
+/// signed (`LupedSignedBolus`).
 enum LupedWatchRequest: Equatable {
     case carbs(Double?)
+    case override(LupedOverrideAction?)
 
     init?(command: String) {
         let parts = command.split(separator: ":", maxSplits: 1).map(String.init)
-        let amount = parts.count == 2 ? Double(parts[1]).flatMap { $0.isFinite && $0 > 0 ? $0 : nil } : nil
-        guard parts[0] == "carbs" else { return nil }
-        self = .carbs(amount)
+        let argument = parts.count == 2 ? parts[1] : nil
+        switch parts.first {
+        case "carbs":
+            self = .carbs(argument.flatMap(Double.init).flatMap { $0.isFinite && $0 > 0 ? $0 : nil })
+        case "override":
+            self = .override(argument.flatMap { $0 == "cancel" ? .cancel : $0.isEmpty ? nil : .start($0) })
+        default:
+            return nil
+        }
     }
 
-    var action: String { "carbs" }
+    var action: String {
+        switch self {
+        case .carbs: "carbs"
+        case .override: "override"
+        }
+    }
+}
+
+/// What a watch's `override:` request asks for.
+public enum LupedOverrideAction: Equatable, Sendable {
+    /// Start the preset with this name or id.
+    case start(String)
+    /// End the running preset.
+    case cancel
 }

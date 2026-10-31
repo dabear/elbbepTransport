@@ -246,6 +246,12 @@ final class LupedWatchRequestTests: XCTestCase {
         XCTAssertEqual(LupedWatchRequest(command: "carbs:-1"), .carbs(nil))
         XCTAssertNil(LupedWatchRequest(command: "refresh"))
         XCTAssertNil(LupedWatchRequest(command: "mute:30"))
+        XCTAssertEqual(LupedWatchRequest(command: "override:Exercise"), .override(.start("Exercise")))
+        XCTAssertEqual(LupedWatchRequest(command: "override:Pre-meal: 1:30"), .override(.start("Pre-meal: 1:30")))
+        XCTAssertEqual(LupedWatchRequest(command: "override:cancel"), .override(.cancel))
+        XCTAssertEqual(LupedWatchRequest(command: "override:"), .override(nil))
+        XCTAssertEqual(LupedWatchRequest(command: "override"), .override(nil))
+        XCTAssertEqual(LupedWatchRequest(command: LupedCommandTiming.stripped("override:Run@home@1798000000")), .override(.start("Run@home")))
     }
 
     // Boluses are only ever signed: the unsigned forms are no request at all.
