@@ -38,6 +38,11 @@ enum LupedDelivery {
     /// with it. Sending at once meant a second message with the same reading
     /// and the new IOB, about 3–4 s later, 87 times a day (device log, 2026-11-01).
     static let loopSettleWindow: TimeInterval = 6
+    /// How long after an alert send the next reading still counts as the alert's
+    /// own. The host issues a glucose alert as soon as the reading is stored, before
+    /// its snapshot with that reading is built, so the alert goes out with the
+    /// previous reading and the new one follows within a few seconds.
+    static let alertReadingWindow: TimeInterval = 30
 
     enum Timing: Equatable {
         /// Alerts, display and settings changes, or nothing to wait for.
@@ -53,14 +58,17 @@ enum LupedDelivery {
     }
 
     /// When to send `new`, compared with what the watch has or is about to get
-    /// (`previous`). Alert changes are never delayed.
-    static func timing(new: LupedPayload, previous: LupedPayload?, needsLoopStatus: Bool) -> Timing {
+    /// (`previous`). Alert changes are never delayed, and neither is the first
+    /// reading newer than `alertReading`, the latest reading an alert went out with.
+    static func timing(new: LupedPayload, previous: LupedPayload?, needsLoopStatus: Bool, alertReading: Date? = nil) -> Timing {
         guard let previous else { return .now }
-        if new.hostAlertState != previous.hostAlertState || new.alertEvent != previous.alertEvent {
+        if alertChanged(new: new, previous: previous) {
             return .now
         }
         if new.latestDate != previous.latestDate {
             guard needsLoopStatus else { return .now }
+            // The reading the alert was issued for: show it with the buzz.
+            if let alertReading, new.latestDate > alertReading { return .now }
             // The loop has run on this reading: send both once its dose is stored.
             if let lastLoop = new.lastLoopCompleted, lastLoop >= new.latestDate { return .settleAfterLoopResult }
             return .holdForLoopResult
@@ -69,6 +77,11 @@ enum LupedDelivery {
             return .now
         }
         return .collectFollowUps
+    }
+
+    static func alertChanged(new: LupedPayload, previous: LupedPayload?) -> Bool {
+        guard let previous else { return false }
+        return new.hostAlertState != previous.hostAlertState || new.alertEvent != previous.alertEvent
     }
 
     /// The RESULT to send again when the watchface restarted while it was in
@@ -183,6 +196,9 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// Until then, sends aren't delayed: the user just changed a setting, and the
     /// host's snapshot with what it now requests should show at once.
     private var sendImmediatelyUntil = Date.distantPast
+    /// The latest reading an alert send carried, and when: the next newer reading
+    /// within `alertReadingWindow` is the alert's own and goes at once.
+    private var alertReading: (readingDate: Date, sentAt: Date)?
     /// Alert fires the watch acknowledged at a level above 0, newest last,
     /// checked against the buzz records in the watch's diagnostics.
     private var deliveredAlerts: [LupedDeliveredAlert] = []
@@ -265,7 +281,19 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// Sends now, or after a short wait so a reading and the loop result that
     /// follows it, or several loop-only changes, go in one message.
     private func scheduleSend(_ payload: LupedPayload) {
-        let timing = Date() < sendImmediatelyUntil ? .now : LupedDelivery.timing(new: payload, previous: inflightPush?.payload ?? deliveredPayload, needsLoopStatus: settings.needsLoopStatus)
+        let previous = inflightPush?.payload ?? deliveredPayload
+        if let pending = alertReading, Date().timeIntervalSince(pending.sentAt) > LupedDelivery.alertReadingWindow {
+            alertReading = nil
+        }
+        let timing = Date() < sendImmediatelyUntil ? .now : LupedDelivery.timing(new: payload, previous: previous, needsLoopStatus: settings.needsLoopStatus, alertReading: alertReading?.readingDate)
+        if LupedDelivery.alertChanged(new: payload, previous: previous) {
+            alertReading = (payload.latestDate, Date())
+        } else if let pending = alertReading, payload.latestDate > pending.readingDate {
+            alertReading = nil
+            if timing == .now, previous?.latestDate != payload.latestDate {
+                record(.info, String(format: "The alert's reading arrived %.1f s after the alert: sending it now", Date().timeIntervalSince(pending.sentAt)))
+            }
+        }
         switch timing {
         case .now:
             cancelDelayedSend()

@@ -530,6 +530,21 @@ final class LupedSendTimingTests: XCTestCase {
         XCTAssertEqual(LupedDelivery.timing(new: payload([100], alertEvent: 1, loop: loop), previous: old, needsLoopStatus: true), .now)
     }
 
+    // The host issues the alert before its snapshot has the new reading, so the
+    // alert goes with the previous reading; the reading that follows goes at once,
+    // even after the loop has run on it.
+    func testAlertsOwnReadingGoesNow() {
+        var ran = loop
+        ran.lastLoopCompleted = start.addingTimeInterval(300 + 0.15)
+        let alert = payload([100], alertLevel: 2, alertEvent: 1, loop: loop)
+        XCTAssertTrue(LupedDelivery.alertChanged(new: alert, previous: payload([100], loop: loop)))
+        XCTAssertEqual(LupedDelivery.timing(new: payload([100, 60], alertLevel: 2, alertEvent: 1, loop: loop), previous: alert, needsLoopStatus: true, alertReading: alert.latestDate), .now)
+        XCTAssertEqual(LupedDelivery.timing(new: payload([100, 60], alertLevel: 2, alertEvent: 1, loop: ran), previous: alert, needsLoopStatus: true, alertReading: alert.latestDate), .now)
+        // Without a recent alert, the same reading waits for the loop's dose.
+        XCTAssertEqual(LupedDelivery.timing(new: payload([100, 60], alertLevel: 2, alertEvent: 1, loop: ran), previous: alert, needsLoopStatus: true), .settleAfterLoopResult)
+        XCTAssertEqual(LupedDelivery.alertReadingWindow, 30)
+    }
+
     func testLoopOnlyChangesAreCollected() {
         var newer = loop
         newer.lastLoopCompleted = loop.lastLoopCompleted?.addingTimeInterval(300)
