@@ -517,8 +517,10 @@ final class LupedSendTimingTests: XCTestCase {
     func testNewReadingWithItsLoopResultGoesNow() {
         var ran = loop
         ran.lastLoopCompleted = start.addingTimeInterval(300 + 0.15)
-        XCTAssertEqual(LupedDelivery.timing(new: payload([100, 110], loop: ran), previous: payload([100], loop: loop), needsLoopStatus: true), .now)
+        // The loop ran on the reading: wait for its dose, so its IOB goes in the same message.
+        XCTAssertEqual(LupedDelivery.timing(new: payload([100, 110], loop: ran), previous: payload([100], loop: loop), needsLoopStatus: true), .settleAfterLoopResult)
         XCTAssertEqual(LupedDelivery.newReadingHold, 10)
+        XCTAssertEqual(LupedDelivery.loopSettleWindow, 6)
     }
 
     // Alerts are never delayed, not even together with a new reading.

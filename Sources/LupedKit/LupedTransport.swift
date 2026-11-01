@@ -33,6 +33,11 @@ enum LupedDelivery {
     /// How long to collect changes that touch only the loop status or status line
     /// (`DATA` 10–14) before sending them in one message.
     static let followUpWindow: TimeInterval = 3
+    /// Once the loop has run on a new reading, how long to wait before sending:
+    /// the loop's dose is stored a few seconds after its result, and IOB moves
+    /// with it. Sending at once meant a second message with the same reading
+    /// and the new IOB, about 3–4 s later, 87 times a day (device log, 2026-11-01).
+    static let loopSettleWindow: TimeInterval = 6
 
     enum Timing: Equatable {
         /// Alerts, display and settings changes, or nothing to wait for.
@@ -42,6 +47,9 @@ enum LupedDelivery {
         case holdForLoopResult
         /// Only loop status or status line changed: collect for `followUpWindow`.
         case collectFollowUps
+        /// A new reading the loop has run on: wait `loopSettleWindow` for the
+        /// loop's dose, so the IOB it changes goes in the same message.
+        case settleAfterLoopResult
     }
 
     /// When to send `new`, compared with what the watch has or is about to get
@@ -53,8 +61,8 @@ enum LupedDelivery {
         }
         if new.latestDate != previous.latestDate {
             guard needsLoopStatus else { return .now }
-            // The loop has run on this reading: its result is in, send both now.
-            if let lastLoop = new.lastLoopCompleted, lastLoop >= new.latestDate { return .now }
+            // The loop has run on this reading: send both once its dose is stored.
+            if let lastLoop = new.lastLoopCompleted, lastLoop >= new.latestDate { return .settleAfterLoopResult }
             return .holdForLoopResult
         }
         if new.coreData != previous.coreData {
@@ -260,14 +268,20 @@ public final class LupedTransport: PebbleTransportDelegate {
         let timing = Date() < sendImmediatelyUntil ? .now : LupedDelivery.timing(new: payload, previous: inflightPush?.payload ?? deliveredPayload, needsLoopStatus: settings.needsLoopStatus)
         switch timing {
         case .now:
-            if delayedSendTiming == .holdForLoopResult, let lastLoop = payload.lastLoopCompleted, lastLoop >= payload.latestDate {
-                record(.info, String(format: "Loop result in after %.1f s: sending it with the reading", Date().timeIntervalSince(delayedSendStarted)))
-            }
             cancelDelayedSend()
             requestSend()
+        case .settleAfterLoopResult:
+            // A running settle window ends soon and sends the latest payload.
+            guard delayedSendTiming != .settleAfterLoopResult else { return }
+            if delayedSendTiming == .holdForLoopResult {
+                record(.info, String(format: "Loop result in after %.1f s: sending it with the reading in %.0f s, once the loop's dose is stored", Date().timeIntervalSince(delayedSendStarted), LupedDelivery.loopSettleWindow))
+            } else {
+                record(.info, String(format: "New reading with the loop result: sending in %.0f s, once the loop's dose is stored", LupedDelivery.loopSettleWindow))
+            }
+            startDelayedSend(after: LupedDelivery.loopSettleWindow, timing: timing)
         case .holdForLoopResult:
-            // A running hold already ends soon; a follow-up window gives way to it.
-            guard delayedSendTiming != .holdForLoopResult else { return }
+            // A running hold or settle window already ends soon; a follow-up window gives way to it.
+            guard delayedSendTiming != .holdForLoopResult, delayedSendTiming != .settleAfterLoopResult else { return }
             startDelayedSend(after: LupedDelivery.newReadingHold, timing: timing)
             record(.info, String(format: "New reading: waiting for %@'s loop result (at most %.0f s) to send both together", hostName, LupedDelivery.newReadingHold))
         case .collectFollowUps:
