@@ -137,3 +137,7 @@ The Luped watchface and its `DATA` protocol live in
 ```sh
 swift test
 ```
+
+## License
+
+MIT; see [LICENSE](LICENSE).
