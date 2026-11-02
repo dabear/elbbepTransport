@@ -93,10 +93,15 @@ enum LupedDelivery {
     /// Whether a host refresh produced `DATA` the watch already has (acknowledged
     /// in this session) or is about to get (in flight), so it needn't be sent.
     /// Watch refresh requests, new sessions and Send Now always send.
+    ///
+    /// While a message is in flight, the watch ends up with that one, so only it
+    /// counts: data that went back to what was delivered before it (A, then B in
+    /// flight, then A again) is sent after it.
     static func unchangedData(_ data: String, delivered: String?, inFlight: String?) -> Unchanged? {
-        if data == inFlight { return .inFlight }
-        if data == delivered { return .delivered }
-        return nil
+        if let inFlight {
+            return data == inFlight ? .inFlight : nil
+        }
+        return data == delivered ? .delivered : nil
     }
 }
 

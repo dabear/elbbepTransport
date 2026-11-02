@@ -225,6 +225,12 @@ final class LupedDeliveryTests: XCTestCase {
         XCTAssertEqual(LupedDelivery.unchangedData("[1,110]", delivered: "[1,100]", inFlight: "[1,110]"), .inFlight)
     }
 
+    // A is delivered, B is in flight, and the next refresh gives A again (Watch
+    // Alarms toggled quickly): the watch will hold B, so A must be sent after it.
+    func testDataBackToTheDeliveredOneIsSentWhileAnotherIsInFlight() {
+        XCTAssertNil(LupedDelivery.unchangedData("[1,110,0,3,[],0,1,0,2]", delivered: "[1,110,0,3,[],0,1,0,2]", inFlight: "[1,110,0,3,[],0,1,0,-2]"))
+    }
+
     // A RESULT that was in flight when the watchface restarted goes out again;
     // a diagnostics request is dropped.
     func testOnlyResultsAreResentAfterAWatchfaceRestart() {
