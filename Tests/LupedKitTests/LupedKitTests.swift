@@ -231,6 +231,20 @@ final class LupedDeliveryTests: XCTestCase {
         XCTAssertNil(LupedDelivery.unchangedData("[1,110,0,3,[],0,1,0,2]", delivered: "[1,110,0,3,[],0,1,0,2]", inFlight: "[1,110,0,3,[],0,1,0,-2]"))
     }
 
+    // Luped sends `refresh` right after Alloy's ready handshake when it starts:
+    // once the handshake's answer reached the watch, or is on its way, unchanged,
+    // the startup refresh isn't answered again.
+    func testTheStartupRefreshIsAnsweredByTheHandshake() {
+        let started = Date()
+        let soon = started.addingTimeInterval(1)
+        XCTAssertTrue(LupedDelivery.refreshAnsweredAtStartup("[1,110]", watchfaceStartedAt: started, delivered: "[1,110]", inFlight: nil, now: soon))
+        XCTAssertTrue(LupedDelivery.refreshAnsweredAtStartup("[1,110]", watchfaceStartedAt: started, delivered: nil, inFlight: "[1,110]", now: soon))
+        XCTAssertFalse(LupedDelivery.refreshAnsweredAtStartup("[1,120]", watchfaceStartedAt: started, delivered: "[1,110]", inFlight: nil, now: soon), "new data since the handshake's answer")
+        XCTAssertFalse(LupedDelivery.refreshAnsweredAtStartup("[1,110]", watchfaceStartedAt: started, delivered: nil, inFlight: nil, now: soon), "the handshake's answer didn't reach the watch")
+        XCTAssertFalse(LupedDelivery.refreshAnsweredAtStartup("[1,110]", watchfaceStartedAt: started, delivered: "[1,110]", inFlight: nil, now: started.addingTimeInterval(LupedDelivery.startupRefreshWindow + 1)), "a later refresh is always answered")
+        XCTAssertFalse(LupedDelivery.refreshAnsweredAtStartup("[1,110]", watchfaceStartedAt: nil, delivered: "[1,110]", inFlight: nil, now: soon), "no handshake from this watchface run")
+    }
+
     // A RESULT that was in flight when the watchface restarted goes out again;
     // a diagnostics request is dropped.
     func testOnlyResultsAreResentAfterAWatchfaceRestart() {

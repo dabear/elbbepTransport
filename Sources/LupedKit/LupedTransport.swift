@@ -43,6 +43,9 @@ enum LupedDelivery {
     /// its snapshot with that reading is built, so the alert goes out with the
     /// previous reading and the new one follows within a few seconds.
     static let alertReadingWindow: TimeInterval = 30
+    /// How long after its ready handshake the watchface's `refresh` counts as the
+    /// one Luped sends when it starts.
+    static let startupRefreshWindow: TimeInterval = 10
 
     enum Timing: Equatable {
         /// Alerts, display and settings changes, or nothing to wait for.
@@ -102,6 +105,15 @@ enum LupedDelivery {
             return data == inFlight ? .inFlight : nil
         }
         return data == delivered ? .delivered : nil
+    }
+
+    /// Whether the watchface's `refresh` is already answered. Luped sends it when
+    /// it starts, right after Alloy's ready handshake, which the phone answers
+    /// with the latest `DATA`: when that answer reached this watchface run, or is
+    /// on its way, and the data is unchanged, a second copy only costs the watch.
+    static func refreshAnsweredAtStartup(_ data: String, watchfaceStartedAt: Date?, delivered: String?, inFlight: String?, now: Date) -> Bool {
+        guard let watchfaceStartedAt, now.timeIntervalSince(watchfaceStartedAt) <= startupRefreshWindow else { return false }
+        return unchangedData(data, delivered: delivered, inFlight: inFlight) != nil
     }
 }
 
@@ -190,9 +202,12 @@ public final class LupedTransport: PebbleTransportDelegate {
     private var requestGeneration = 0
     private var deliveredGeneration = 0
     private var inflightPush: (transactionID: UInt8, generation: Int, payload: LupedPayload, sentAt: Date)?
-    /// The `DATA` the watch acknowledged in this session. A host refresh that
-    /// produces the same `DATA` is not sent again; cleared when the session resets.
+    /// The `DATA` the running watchface acknowledged. A host refresh that
+    /// produces the same `DATA` is not sent again; cleared when the session
+    /// resets or the watchface restarts.
     private var deliveredPayload: LupedPayload?
+    /// When the running watchface sent its ready handshake.
+    private var watchfaceStartedAt: Date?
     /// A send waiting for the loop result or collecting loop-only changes; it
     /// sends `latestPayload` when it fires.
     private var delayedSend: Task<Void, Never>?
@@ -442,6 +457,9 @@ public final class LupedTransport: PebbleTransportDelegate {
         resendIfCrossed()
         if tuples[PebbleAppMessage.alloyReadyKey] != nil {
             dropMessagesToPreviousWatchface()
+            // The new watchface run has none of what the previous one acknowledged.
+            deliveredPayload = nil
+            watchfaceStartedAt = Date()
             // A new watchface run has no key: give it a new one, so nothing the
             // previous run signed is accepted any more.
             if issuesBolusKey {
@@ -462,8 +480,9 @@ public final class LupedTransport: PebbleTransportDelegate {
         }
         // Alloy sends a ready handshake (key 15025) when the watchface starts and
         // keeps its own outbox closed until the phone sends any message back;
-        // only then does Luped send its `refresh` command. Answer both with the
-        // latest reading.
+        // only then does Luped send its `refresh` command. Answer the handshake
+        // with the latest reading, and the startup `refresh` only if that answer
+        // didn't reach the watch or the data changed since.
         let command = tuples[LupedMessageKey.command]?.string
         let base = command.map(LupedCommandTiming.stripped)
         if let command, LupedSignedBolus.isSigned(command) {
@@ -472,7 +491,12 @@ public final class LupedTransport: PebbleTransportDelegate {
             handleWatchRequest(request, command: command)
         } else if tuples[PebbleAppMessage.alloyReadyKey] != nil || command == "refresh" {
             record(.fromWatch, "Watchface requested refresh (\(command.map { "COMMAND \($0)" } ?? "ready handshake"))\n" + LupedPayload.alignedRows([("tuples", hex)]))
-            sendIfNeeded(force: true)
+            if tuples[PebbleAppMessage.alloyReadyKey] == nil, let latest = latestPayload,
+               LupedDelivery.refreshAnsweredAtStartup(latest.data, watchfaceStartedAt: watchfaceStartedAt, delivered: deliveredPayload?.data, inFlight: inflightPush?.payload.data, now: Date()) {
+                record(.info, "The watchface's startup refresh: its ready handshake was answered with the same DATA; not sent again")
+            } else {
+                sendIfNeeded(force: true)
+            }
         } else if let command {
             // An action LupedKit doesn't know (`bolus:` is gone) or a malformed
             // one: nothing is passed to the host.
