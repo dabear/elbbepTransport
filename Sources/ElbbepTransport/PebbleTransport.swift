@@ -126,6 +126,9 @@ public protocol PebbleTransportDelegate: AnyObject {
 /// exchange, acknowledges the app's AppMessages and decodes them, and sends
 /// AppMessages and app run-state commands. What to send, when, and how to retry
 /// belongs to the delegate.
+///
+/// Each instance owns its own `CBPeripheralManager` and service, so an app can
+/// serve several watch apps with one transport per app UUID.
 @MainActor
 public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManagerDelegate {
     public weak var delegate: PebbleTransportDelegate?
@@ -245,7 +248,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
             return
         }
 
-        record(.info, String(format: "Watch link on for watchface %@", appUUID.uuidString.lowercased()))
+        record(.info, String(format: "Watch link on for app %@", appUUID.uuidString.lowercased()))
         peripheralManager = CBPeripheralManager(delegate: self, queue: .main)
     }
 

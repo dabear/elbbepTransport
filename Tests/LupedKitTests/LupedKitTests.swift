@@ -207,6 +207,29 @@ final class LupedSettingsTests: XCTestCase {
         XCTAssertEqual(LupedSettings(rawValue: [:]), LupedSettings())
         XCTAssertEqual(LupedSettings(rawValue: ["lupedPebbleWatchfaceUUID": "not a uuid"]).watchfaceUUID, LupedSettings.defaultWatchfaceUUID)
     }
+
+    // Luped Remote is served by default; turning it off is kept.
+    func testRemoteSettingRoundTrips() {
+        XCTAssertTrue(LupedSettings().remoteEnabled)
+        XCTAssertTrue(LupedSettings(rawValue: [:]).remoteEnabled)
+        XCTAssertFalse(LupedSettings(rawValue: LupedSettings(remoteEnabled: false).rawValue).remoteEnabled)
+    }
+}
+
+final class LupedRoutingTests: XCTestCase {
+    // A session opening doesn't take over from an app whose session is open.
+    func testAnOpenForegroundSessionKeepsTheMessages() {
+        XCTAssertEqual(LupedRouting.foreground(afterOpening: .remote, current: .watchface, openSessions: [.watchface]), .watchface)
+        XCTAssertEqual(LupedRouting.foreground(afterOpening: .remote, current: .watchface, openSessions: []), .remote)
+        XCTAssertEqual(LupedRouting.foreground(afterOpening: .watchface, current: .watchface, openSessions: []), .watchface)
+    }
+
+    // After a rejection the other app is tried once, then the phone backs off.
+    func testARejectionTriesTheOtherAppOnce() {
+        XCTAssertEqual(LupedRouting.next(afterRejectionBy: .watchface, rejected: [.watchface], openSessions: [.watchface, .remote]), .remote)
+        XCTAssertNil(LupedRouting.next(afterRejectionBy: .remote, rejected: [.watchface, .remote], openSessions: [.watchface, .remote]))
+        XCTAssertNil(LupedRouting.next(afterRejectionBy: .watchface, rejected: [.watchface], openSessions: [.watchface]), "no session for the remote")
+    }
 }
 
 final class LupedDeliveryTests: XCTestCase {

@@ -118,7 +118,7 @@ enum LupedDelivery {
 }
 
 /// Sends a host app's glucose readings, alerts and loop status to the Luped
-/// watchface over a `PebbleTransport`.
+/// watchface, and to Luped Remote, each over its own `PebbleTransport`.
 ///
 /// The host supplies a `snapshotProvider` and calls `refresh()` when any of them
 /// change. Luped's own settings are applied whenever `settings` changes.
@@ -126,12 +126,31 @@ enum LupedDelivery {
 /// The latest payload is kept so a watchface `refresh` or a new session can
 /// re-send it. A rejected or unacknowledged send is retried with backoff, and
 /// immediately on a glucose update, a watchface refresh, or a new session.
+///
+/// The watch runs one of the two apps at a time and keeps both sessions open,
+/// so everything goes to the `foreground` app: the one that last started or
+/// sent something, or the other one after it rejects a push. Requests from
+/// either app reach the same callbacks, and a `RESULT` goes to the app running
+/// when it is sent, so the watchface shows the answer to a request Luped
+/// Remote sent before it closed.
 @MainActor
 public final class LupedTransport: PebbleTransportDelegate {
     /// The host app's name, such as "Loop" or "Trio": in log lines, and sent as
     /// `DATA` index 15 so a watch can tell two apps on the same phone apart.
     public let hostName: String
-    private let transport: PebbleTransport
+    private let watchfaceTransport: PebbleTransport
+    private let remoteTransport: PebbleTransport
+    /// The app messages go to; see the type's documentation.
+    public private(set) var foreground = LupedWatchApp.watchface {
+        didSet { status.foreground = foreground }
+    }
+    /// Apps that rejected a push since an app last accepted one or sent a message.
+    private var rejectedApps = Set<LupedWatchApp>()
+    /// After moving to an app that may not be running either: give it a bolus
+    /// key once it accepts the reading, not before.
+    var bolusKeyOnDelivery = false
+    /// The foreground app's transport.
+    private var transport: PebbleTransport { transport(for: foreground) }
 
     /// Luped's own settings. The host persists them; assigning applies them.
     public var settings: LupedSettings {
@@ -244,8 +263,60 @@ public final class LupedTransport: PebbleTransportDelegate {
     public init(hostName: String, settings: LupedSettings) {
         self.hostName = hostName
         self.settings = settings
-        transport = PebbleTransport(isEnabled: settings.isEnabled, appUUID: settings.watchfaceUUID)
-        transport.delegate = self
+        watchfaceTransport = PebbleTransport(isEnabled: settings.isEnabled, appUUID: settings.watchfaceUUID)
+        remoteTransport = PebbleTransport(isEnabled: Self.servesRemote(settings), appUUID: LupedSettings.remoteUUID)
+        watchfaceTransport.delegate = self
+        remoteTransport.delegate = self
+    }
+
+    private static func servesRemote(_ settings: LupedSettings) -> Bool {
+        settings.isEnabled && settings.remoteEnabled
+    }
+
+    private func transport(for app: LupedWatchApp) -> PebbleTransport {
+        app == .watchface ? watchfaceTransport : remoteTransport
+    }
+
+    private func app(of transport: PebbleTransport) -> LupedWatchApp {
+        transport === remoteTransport ? .remote : .watchface
+    }
+
+    private var openSessions: Set<LupedWatchApp> {
+        Set([LupedWatchApp.watchface, .remote].filter { transport(for: $0).isSessionOpen })
+    }
+
+    /// Sends to `app` from now on. What the previous app hadn't acknowledged is
+    /// dropped (a `RESULT` goes to `app` instead), and `app` gets the reading
+    /// and, when the host issues them, a bolus key of its own: now, or with
+    /// `keyOnDelivery` once it accepts the reading.
+    private func switchForeground(to app: LupedWatchApp, _ reason: String, keyOnDelivery: Bool = false) {
+        guard app != foreground else { return }
+        record(.info, "Sending to \(app.name) from now on: \(reason)")
+        dropUnacknowledgedMessages(because: "\(foreground.name) is no longer running")
+        foreground = app
+        deliveredPayload = nil
+        pushRetry?.cancel()
+        pushRetry = nil
+        retryDelay = 0
+        paused = false
+        status.retryAt = nil
+        bolusKeyOnDelivery = keyOnDelivery
+        if issuesBolusKey, !keyOnDelivery {
+            startBolusSession()
+        }
+    }
+
+    /// After the foreground app rejected a message: moves to the other app and
+    /// returns `true` when its session is open and it hasn't rejected one too.
+    private func moveOnAfterRejection() -> Bool {
+        rejectedApps.insert(foreground)
+        guard let next = LupedRouting.next(afterRejectionBy: foreground, rejected: rejectedApps, openSessions: openSessions) else {
+            rejectedApps.removeAll()
+            return false
+        }
+        switchForeground(to: next, "\(foreground.name) rejected a message, so it isn't running", keyOnDelivery: true)
+        sendIfNeeded(force: true)
+        return true
     }
 
     /// Writes to the communication log and the host's diagnostic log.
@@ -254,9 +325,10 @@ public final class LupedTransport: PebbleTransportDelegate {
         communicationLog.append(kind, message)
     }
 
-    /// Starts the GATT service if Pebble support is on.
+    /// Starts the GATT services if Pebble support is on.
     public func start() {
-        transport.start()
+        watchfaceTransport.start()
+        remoteTransport.start()
     }
 
     /// Builds the payload from the host's current snapshot and sends it if it
@@ -265,7 +337,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         guard let snapshotProvider else {
             return
         }
-        guard transport.isEnabled, settings.isEnabled else {
+        guard watchfaceTransport.isEnabled, settings.isEnabled else {
             return
         }
 
@@ -381,8 +453,14 @@ public final class LupedTransport: PebbleTransportDelegate {
         if settings.fullScreen != old.fullScreen {
             record(.info, "Watch layout: \(settings.fullScreen ? "Large Glucose (no graph, status line or Last Loop)" : "Graph")")
         }
-        if settings.isEnabled != transport.isEnabled || settings.watchfaceUUID != transport.appUUID {
+        if settings.remoteEnabled != old.remoteEnabled {
+            record(.info, "Luped Remote \(settings.remoteEnabled ? "on" : "off: it gets no watch session")")
+        }
+        if settings.isEnabled != watchfaceTransport.isEnabled || settings.watchfaceUUID != watchfaceTransport.appUUID {
             applyLink()
+        } else if Self.servesRemote(settings) != remoteTransport.isEnabled {
+            applyRemoteLink()
+            Task { await refresh() }
         } else {
             Task { await refresh() }
         }
@@ -393,7 +471,8 @@ public final class LupedTransport: PebbleTransportDelegate {
         let enabled = settings.isEnabled
         let uuid = settings.watchfaceUUID
         record(.info, enabled ? "Watch link settings changed: watchface \(uuid.uuidString.lowercased())" : "Watch link off")
-        transport.reconfigure(isEnabled: enabled, appUUID: uuid)
+        watchfaceTransport.reconfigure(isEnabled: enabled, appUUID: uuid)
+        applyRemoteLink()
 
         guard enabled else {
             // Fully off: no Bluetooth manager, no retries, no payload building.
@@ -408,9 +487,22 @@ public final class LupedTransport: PebbleTransportDelegate {
         Task { await refresh() }
     }
 
+    /// Publishes or removes Luped Remote's service; without it, everything goes
+    /// to the watchface.
+    private func applyRemoteLink() {
+        let enabled = Self.servesRemote(settings)
+        guard enabled != remoteTransport.isEnabled else { return }
+        remoteTransport.reconfigure(isEnabled: enabled, appUUID: LupedSettings.remoteUUID)
+        if !enabled {
+            rejectedApps.remove(.remote)
+            switchForeground(to: .watchface, "Luped Remote's watch session was removed")
+        }
+    }
+
     // MARK: - PebbleTransportDelegate
 
-    public func pebbleTransport(_ transport: PebbleTransport, log kind: PebbleLogKind, _ message: String) {
+    public func pebbleTransport(_ source: PebbleTransport, log kind: PebbleLogKind, _ message: String) {
+        let message = app(of: source) == .remote ? "Luped Remote: " + message : message
         switch kind {
         case .toWatch: record(.toWatch, message)
         case .fromWatch: record(.fromWatch, message)
@@ -419,20 +511,37 @@ public final class LupedTransport: PebbleTransportDelegate {
         }
     }
 
-    public func pebbleTransportDidChangeLink(_ transport: PebbleTransport) {
-        if status.link != transport.link {
-            status.link = transport.link
+    public func pebbleTransportDidChangeLink(_ source: PebbleTransport) {
+        if app(of: source) == .remote {
+            if status.remoteLink != source.link {
+                status.remoteLink = source.link
+            }
+        } else if status.link != source.link {
+            status.link = source.link
         }
     }
 
-    public func pebbleTransportSessionDidOpen(_ transport: PebbleTransport) {
-        if issuesBolusKey {
+    public func pebbleTransportSessionDidOpen(_ source: PebbleTransport) {
+        let opened = app(of: source)
+        let next = LupedRouting.foreground(afterOpening: opened, current: foreground, openSessions: openSessions.subtracting([opened]))
+        guard next == opened else {
+            // The watch opens a session for each app; this one is sent to once
+            // it shows it's running.
+            record(.info, "\(opened.name)'s session opened; still sending to \(foreground.name)")
+            return
+        }
+        if foreground != opened {
+            // Starts a bolus session for it.
+            switchForeground(to: opened, "its session opened and \(foreground.name)'s is closed")
+        } else if issuesBolusKey {
             startBolusSession()
         }
         sendIfNeeded(force: true)
     }
 
-    public func pebbleTransportSessionWillReset(_ transport: PebbleTransport) {
+    public func pebbleTransportSessionWillReset(_ source: PebbleTransport) {
+        // Nothing is in flight to an app that isn't the foreground one.
+        guard app(of: source) == foreground else { return }
         if inflightPush != nil {
             record(.info, "Session reset before the watch acknowledged the pushed reading")
         }
@@ -453,16 +562,24 @@ public final class LupedTransport: PebbleTransportDelegate {
         endBolusSession()
     }
 
-    public func pebbleTransport(_ transport: PebbleTransport, didReceive tuples: [UInt32: AppMessageTuple], message: [UInt8]) {
+    public func pebbleTransport(_ source: PebbleTransport, didReceive tuples: [UInt32: AppMessageTuple], message: [UInt8]) {
+        // Only the running app sends anything.
+        rejectedApps.removeAll()
+        let sender = app(of: source)
+        let started = tuples[PebbleAppMessage.alloyReadyKey] != nil
+        let switched = sender != foreground
+        if switched {
+            switchForeground(to: sender, started ? "it started" : "it sent a message")
+        }
         resendIfCrossed()
-        if tuples[PebbleAppMessage.alloyReadyKey] != nil {
-            dropMessagesToPreviousWatchface()
+        if started {
+            dropUnacknowledgedMessages(because: "\(sender.name) restarted")
             // The new watchface run has none of what the previous one acknowledged.
             deliveredPayload = nil
             watchfaceStartedAt = Date()
             // A new watchface run has no key: give it a new one, so nothing the
-            // previous run signed is accepted any more.
-            if issuesBolusKey {
+            // previous run signed is accepted any more (a switch gave it one).
+            if issuesBolusKey, !switched {
                 startBolusSession()
             }
         }
@@ -490,7 +607,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         } else if let command, let base, let request = LupedWatchRequest(command: base) {
             handleWatchRequest(request, command: command)
         } else if tuples[PebbleAppMessage.alloyReadyKey] != nil || command == "refresh" {
-            record(.fromWatch, "Watchface requested refresh (\(command.map { "COMMAND \($0)" } ?? "ready handshake"))\n" + LupedPayload.alignedRows([("tuples", hex)]))
+            record(.fromWatch, "\(sender == .watchface ? "Watchface" : "Luped Remote") requested refresh (\(command.map { "COMMAND \($0)" } ?? "ready handshake"))\n" + LupedPayload.alignedRows([("tuples", hex)]))
             if tuples[PebbleAppMessage.alloyReadyKey] == nil, let latest = latestPayload,
                LupedDelivery.refreshAnsweredAtStartup(latest.data, watchfaceStartedAt: watchfaceStartedAt, delivered: deliveredPayload?.data, inFlight: inflightPush?.payload.data, now: Date()) {
                 record(.info, "The watchface's startup refresh: its ready handshake was answered with the same DATA; not sent again")
@@ -504,13 +621,40 @@ public final class LupedTransport: PebbleTransportDelegate {
         } else if tuples[LupedMessageKey.diagnostics] == nil {
             record(.fromWatch, "Watch message\n" + LupedPayload.alignedRows([("tuples", hex)]))
         }
+        // An app that was already running when the phone moved to it has the
+        // reading only from its own session: send it (a refresh already did).
+        if switched, !started, command != "refresh" {
+            sendIfNeeded(force: true)
+        }
     }
 
-    public func pebbleTransport(_ transport: PebbleTransport, didReceiveReply acknowledged: Bool, transactionID: UInt8, message: [UInt8]) {
+    public func pebbleTransport(_ source: PebbleTransport, didReceiveReply acknowledged: Bool, transactionID: UInt8, message: [UInt8]) {
         let reply = acknowledged ? "ACK" : "NACK"
+        // Each session numbers its own messages; only the foreground app's are in flight.
+        guard app(of: source) == foreground else {
+            record(.fromWatch, "#\(transactionID) \(reply) from \(app(of: source).name), which nothing is in flight to; ignored")
+            return
+        }
+        if acknowledged {
+            rejectedApps.removeAll()
+        }
         if let pending = inflightCommand, pending.transactionID == transactionID {
             inflightCommand = nil
             record(.fromWatch, "#\(transactionID) \(reply) · \(pending.command)\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
+            if !acknowledged, pending.command != "COMMAND diagnostics" {
+                // A RESULT goes to the other app if that is the one running; a
+                // bolus key is replaced by one of the other app's own.
+                let result = LupedDelivery.resultToResend(afterRestart: pending.command)
+                if let result {
+                    pendingResults.insert(result, at: 0)
+                }
+                if moveOnAfterRejection() {
+                    return
+                }
+                if result != nil {
+                    pendingResults.removeFirst()
+                }
+            }
             if pending.command == "COMMAND diagnostics" {
                 if !acknowledged {
                     status.watchInfoNote = NSLocalizedString("The watch rejected the request; the watchface is probably not running.", bundle: .lupedKit, comment: "Pebble watch info note: request rejected")
@@ -539,6 +683,12 @@ public final class LupedTransport: PebbleTransportDelegate {
             record(.fromWatch, "#\(transactionID) ACK in \(elapsed) ms · watch stored the \(readingTime) reading, \(push.payload.readingCount == 0 ? "no history (Large Glucose)" : "\(push.payload.readingCount) history points")\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
             deliveredGeneration = push.generation
             deliveredPayload = push.payload
+            if bolusKeyOnDelivery {
+                bolusKeyOnDelivery = false
+                if issuesBolusKey {
+                    startBolusSession()
+                }
+            }
             if push.payload.hostAlertState > 0, push.payload.alertEvent != deliveredAlerts.last?.event {
                 deliveredAlerts.append(.init(event: push.payload.alertEvent, level: push.payload.hostAlertState, deliveredAt: Date()))
                 deliveredAlerts = Array(deliveredAlerts.suffix(10))
@@ -552,8 +702,11 @@ public final class LupedTransport: PebbleTransportDelegate {
             status.retryAt = nil
             sendIfNeeded()
         } else {
-            // The watch rejects pushes while Luped is not the running watchface.
-            record(.fromWatch, "#\(transactionID) NACK in \(elapsed) ms · watch rejected the \(readingTime) reading; the watchface is probably not running\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
+            // The watch rejects pushes while the app is not running.
+            record(.fromWatch, "#\(transactionID) NACK in \(elapsed) ms · watch rejected the \(readingTime) reading; \(foreground.name) is probably not running\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
+            if moveOnAfterRejection() {
+                return
+            }
             status.lastRejectedAt = Date()
             scheduleRetry()
         }
@@ -602,6 +755,11 @@ public final class LupedTransport: PebbleTransportDelegate {
             status.watchInfoNote = NSLocalizedString("The watch is not connected.", bundle: .lupedKit, comment: "Pebble watch info note: no session")
             return
         }
+        // Only the watchface reports diagnostics.
+        guard foreground == .watchface else {
+            status.watchInfoNote = NSLocalizedString("Luped Remote is open on the watch. Close it, then try again.", bundle: .lupedKit, comment: "Pebble watch info note: the remote app is running")
+            return
+        }
         diagnosticsRequested = true
         sendPendingCommand()
     }
@@ -613,20 +771,23 @@ public final class LupedTransport: PebbleTransportDelegate {
         status.diagnostics = LupedWatchDiagnostics(json: json, receivedAt: receivedAt)
     }
 
-    /// Only a freshly started watchface sends the ready handshake, so anything
-    /// still awaiting an ACK went to the previous instance and will never be
-    /// answered. Drop it so the handshake is answered at once instead of after
-    /// the ACK timeout and a retry. A RESULT goes out again to the new watchface;
-    /// a diagnostics request is dropped (the watch reports on its own).
-    private func dropMessagesToPreviousWatchface() {
+    /// Only a freshly started app sends the ready handshake, and the watch runs
+    /// one app at a time, so anything still awaiting an ACK when an app starts
+    /// or the phone moves to the other app will never be answered. Drop it so
+    /// the new app is answered at once instead of after the ACK timeout and a
+    /// retry. A RESULT goes out again to the new app; a diagnostics request is
+    /// dropped (the watchface reports on its own).
+    private func dropUnacknowledgedMessages(because reason: String) {
+        crossedMessageResend?.cancel()
+        crossedMessageResend = nil
         if let push = inflightPush {
-            record(.info, "#\(push.transactionID) dropped: the watchface restarted before acknowledging it")
+            record(.info, "#\(push.transactionID) dropped: \(reason) before acknowledging it")
             inflightPush = nil
             pushAckTimeout?.cancel()
             pushAckTimeout = nil
         }
         if let pending = inflightCommand {
-            record(.info, "#\(pending.transactionID) \(pending.command) dropped: the watchface restarted before acknowledging it")
+            record(.info, "#\(pending.transactionID) \(pending.command) dropped: \(reason) before acknowledging it")
             if let result = LupedDelivery.resultToResend(afterRestart: pending.command) {
                 pendingResults.insert(result, at: 0)
             }
@@ -806,7 +967,12 @@ public final class LupedLinkStatus: ObservableObject {
         public let milliseconds: Int
     }
 
+    /// The watchface's session; the watch shows it whichever app runs.
     @Published public var link = Link.off
+    /// Luped Remote's session (off while it isn't served).
+    @Published public var remoteLink = Link.off
+    /// The app the phone sends to.
+    @Published public var foreground = LupedWatchApp.watchface
     @Published public var lastDelivery: Delivery?
     @Published public var lastRejectedAt: Date?
     @Published public var retryAt: Date?

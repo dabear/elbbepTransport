@@ -1,7 +1,8 @@
 import Foundation
 
 /// Luped's own settings: whether the watch link is on, which watchface it
-/// serves, and how the watch alarms and display behave.
+/// serves, whether Luped Remote is served too, and how the watch alarms and
+/// display behave.
 ///
 /// The host owns persistence: a plugin keeps `rawValue` in its own state.
 public struct LupedSettings: Equatable {
@@ -15,9 +16,13 @@ public struct LupedSettings: Equatable {
         static let fullScreen = "lupedPebbleFullScreen"
         static let statusLine = "lupedPebbleStatusLine"
         static let loopRing = "lupedPebbleLoopRing"
+        static let remoteEnabled = "lupedPebbleRemoteEnabled"
     }
 
     public static let defaultWatchfaceUUID = UUID(uuidString: "bf32924c-4839-449e-9e56-ee190249acb2")!
+    /// Luped Remote, the watchapp that shows the same reading and sends the
+    /// watchface's requests from its buttons.
+    public static let remoteUUID = UUID(uuidString: "738255f4-b58b-41cd-a7ae-27fc80e81fcb")!
 
     /// Whether a Pebble has been added; off until then.
     public var isEnabled: Bool
@@ -34,6 +39,9 @@ public struct LupedSettings: Equatable {
     /// age, which dims the line when the loop is stale, so the ring is always on
     /// then.
     public var loopRing: Bool
+    /// Luped Remote gets its own watch session next to the watchface's. Its
+    /// requests are the watchface's, so the host's own switches decide them.
+    public var remoteEnabled: Bool
 
     public init(
         isEnabled: Bool = false,
@@ -41,7 +49,8 @@ public struct LupedSettings: Equatable {
         alarmsEnabled: Bool = true,
         fullScreen: Bool = false,
         statusLine: LupedStatusLine = .iobAndCob,
-        loopRing: Bool = true
+        loopRing: Bool = true,
+        remoteEnabled: Bool = true
     ) {
         self.isEnabled = isEnabled
         self.watchfaceUUID = watchfaceUUID
@@ -49,6 +58,7 @@ public struct LupedSettings: Equatable {
         self.fullScreen = fullScreen
         self.statusLine = statusLine
         self.loopRing = loopRing
+        self.remoteEnabled = remoteEnabled
     }
 
     /// The status line the watch shows: none with Large Glucose, which has no
@@ -86,7 +96,8 @@ public struct LupedSettings: Equatable {
             alarmsEnabled: rawValue[Key.alarmsEnabled] as? Bool ?? defaults.alarmsEnabled,
             fullScreen: rawValue[Key.fullScreen] as? Bool ?? defaults.fullScreen,
             statusLine: (rawValue[Key.statusLine] as? String).flatMap(LupedStatusLine.init(rawValue:)) ?? defaults.statusLine,
-            loopRing: rawValue[Key.loopRing] as? Bool ?? defaults.loopRing
+            loopRing: rawValue[Key.loopRing] as? Bool ?? defaults.loopRing,
+            remoteEnabled: rawValue[Key.remoteEnabled] as? Bool ?? defaults.remoteEnabled
         )
     }
 
@@ -98,6 +109,7 @@ public struct LupedSettings: Equatable {
             Key.fullScreen: fullScreen,
             Key.statusLine: statusLine.rawValue,
             Key.loopRing: loopRing,
+            Key.remoteEnabled: remoteEnabled,
         ]
     }
 }

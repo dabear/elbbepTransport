@@ -76,6 +76,12 @@ disabling releases Bluetooth entirely.
   from apps with PebbleKit JS enabled to the Pebble app's system session.
 - Run one host per app UUID. Two phone apps publishing the same app UUID each
   get a watch session and compete for the app.
+- To serve several watch apps, create one `PebbleTransport` per app UUID: each
+  publishes its own service with its own `CBPeripheralManager`. The watch opens
+  and keeps a session for every one of them, but only the running app accepts
+  pushes; the others NACK them.
+- PebbleOS routes a JS-free app's messages to the session published for its
+  UUID.
 - Alloy disables a watchface's outbox whenever a non-system session opens or
   closes, until the watchface restarts or receives a message after starting.
 
@@ -85,8 +91,8 @@ disabling releases Bluetooth entirely.
 to Luped and keeps the plugin's state: link status, delivery and retries, watch
 diagnostics, and a communication log.
 
-Luped's own settings (watchface, Watch Alarms, layout, status line, Last Loop)
-are a `LupedSettings` value that the host persists: keep `settings.rawValue` in
+Luped's own settings (watchface, Luped Remote, Watch Alarms, layout, status
+line, Last Loop) are a `LupedSettings` value that the host persists: keep `settings.rawValue` in
 the plugin's saved state, create the transport with
 `LupedTransport(hostName:settings:)`, and assign `luped.settings` to apply a
 change. `needsLoopStatus` and `needsTherapy` say what the current settings
@@ -128,7 +134,18 @@ step with the host and stops when the user acknowledges on the phone. It colours
 its ring from the state (red for lows, amber for high) and has no thresholds of
 its own.
 
-The Luped watchface and its `DATA` protocol live in
+LupedKit also serves Luped Remote (`LupedSettings.remoteUUID`), a watchapp that
+shows the same reading and sends the watchface's requests from its buttons. It
+gets a session of its own while `remoteEnabled` is on (the default). The watch
+runs one of the two at a time, so LupedKit sends to the app that last started
+or sent something (`foreground`), and to the other one after the first rejects a
+push. Both apps' requests reach the same callbacks; each app run gets its own
+bolus key; a `RESULT` goes to whichever app is running when it is sent, so the
+watchface shows the answer to a request the remote sent before it closed.
+`status.remoteLink` and `status.foreground` show the remote's session and where
+messages go; watch diagnostics come from the watchface only.
+
+The Luped watchface, Luped Remote and their `DATA` protocol live in
 [LupedPebbleWatchFace](https://github.com/dabear/LupedPebbleWatchFace)
 (`variants/luped/PROTOCOL.md`).
 

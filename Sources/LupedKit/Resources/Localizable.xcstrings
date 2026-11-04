@@ -1,6 +1,9 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Luped Remote is open on the watch. Close it, then try again.": {
+      "comment": "Pebble watch info note: the remote app is running"
+    },
     "The watch did not reply. Check that Luped CGM is the active watchface, then try again.": {
       "comment": "Pebble watch info note: no reply"
     },
