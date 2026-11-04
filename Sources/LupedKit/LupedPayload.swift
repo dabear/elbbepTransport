@@ -103,8 +103,8 @@ public struct LupedPayload: Equatable {
     /// alert level stays the same.
     /// `settings` lets the log decode say why a loop status or status line field is
     /// `null`: the user's Layout, Status Line and Last Loop choices, or a value the host
-    /// didn't provide.
-    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil, hostName: String? = nil, settings: LupedSettings = LupedSettings()) {
+    /// didn't provide. `remote` leaves the history out: Luped Remote draws no graph.
+    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil, hostName: String? = nil, settings: LupedSettings = LupedSettings(), remote: Bool = false) {
         let readings = Self.graphReadings(readings, limit: 12)
         guard let latest = readings.last else {
             return nil
@@ -119,7 +119,7 @@ public struct LupedPayload: Equatable {
         let timestamp = Int64(latest.date.timeIntervalSince1970 * 1_000)
         // Large Glucose has no graph, so it gets no history. Switching back to
         // Graph sends a new DATA right away, which brings the history back.
-        let history = fullScreen ? [] : values
+        let history = fullScreen || remote ? [] : values
         let unitName = unit == .millimolesPerLiter ? "mmol/L" : "mg/dL"
 
         // Each DATA field paired with the description shown under the summary in the
@@ -131,7 +131,7 @@ public struct LupedPayload: Equatable {
             (values[values.count - 1], "current glucose (\(unitName))"),
             (Self.rounded(delta, for: unit), "delta (\(unitName))"),
             (direction, "trend code \(Self.trendArrows[direction])"),
-            (history, fullScreen ? "glucose history (not sent: Large Glucose has no graph)" : "glucose history (\(history.count) readings)"),
+            (history, remote ? "glucose history (not sent: Luped Remote has no graph)" : fullScreen ? "glucose history (not sent: Large Glucose has no graph)" : "glucose history (\(history.count) readings)"),
             (unit == .millimolesPerLiter ? 1 : 0, "\(unitName) display"),
             (timestamp, "timestamp (milliseconds since Unix epoch)"),
             (fullScreen ? 1 : 0, fullScreen ? "layout: Large Glucose" : "layout: Graph"),

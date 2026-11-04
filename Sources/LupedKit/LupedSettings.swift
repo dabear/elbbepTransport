@@ -72,6 +72,21 @@ public struct LupedSettings: Equatable {
     /// Whether the watch needs the loop status (`DATA` 10–13) from the host.
     public var needsLoopStatus: Bool { showsLoopRing }
 
+    /// Whether the host should supply the loop status: for the watchface's
+    /// choices, or for Luped Remote, which always shows it.
+    public var hostNeedsLoopStatus: Bool { needsLoopStatus || remoteEnabled }
+
+    /// The display choices Luped Remote is sent with, whatever the watchface
+    /// shows: IOB, COB and the loop's age and mode, for its main screen and its
+    /// bolus and carbs confirmations.
+    var remote: LupedSettings {
+        var settings = self
+        settings.fullScreen = false
+        settings.statusLine = .iobAndCob
+        settings.loopRing = true
+        return settings
+    }
+
     /// Whether the status line is formatted from the host's therapy values.
     public var needsTherapy: Bool { shownStatusLine.needsTherapy }
 

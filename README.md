@@ -95,7 +95,7 @@ Luped's own settings (watchface, Luped Remote, Watch Alarms, layout, status
 line, Last Loop) are a `LupedSettings` value that the host persists: keep `settings.rawValue` in
 the plugin's saved state, create the transport with
 `LupedTransport(hostName:settings:)`, and assign `luped.settings` to apply a
-change. `needsLoopStatus` and `needsTherapy` say what the current settings
+change. `hostNeedsLoopStatus` and `needsTherapy` say what the current settings
 need from the host.
 
 The host app adapts its own types:
@@ -142,7 +142,8 @@ or sent something (`foreground`), and to the other one after the first rejects a
 push. Both apps' requests reach the same callbacks; each app run gets its own
 bolus key; a `RESULT` goes to whichever app is running when it is sent, so the
 watchface shows the answer to a request the remote sent before it closed.
-`status.remoteLink` and `status.foreground` show the remote's session and where
+The remote always gets IOB, COB and the loop's status, whatever the watchface
+shows, and no graph history. `status.remoteLink` and `status.foreground` show the remote's session and where
 messages go; watch diagnostics come from the watchface only.
 
 The Luped watchface, Luped Remote and their `DATA` protocol live in

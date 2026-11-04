@@ -208,6 +208,22 @@ final class LupedSettingsTests: XCTestCase {
         XCTAssertEqual(LupedSettings(rawValue: ["lupedPebbleWatchfaceUUID": "not a uuid"]).watchfaceUUID, LupedSettings.defaultWatchfaceUUID)
     }
 
+    // Luped Remote always shows IOB, COB and the loop, so the host supplies them
+    // even when the watchface's display leaves them out.
+    func testTheRemoteGetsLoopStatusWhateverTheWatchfaceShows() throws {
+        let watchface = LupedSettings(fullScreen: true)
+        XCTAssertFalse(watchface.needsLoopStatus)
+        XCTAssertTrue(watchface.hostNeedsLoopStatus)
+        XCTAssertFalse(LupedSettings(fullScreen: true, remoteEnabled: false).hostNeedsLoopStatus)
+        let status = LupedLoopStatus(insulinOnBoard: 1.25, carbsOnBoard: 12, lastLoopCompleted: Date(timeIntervalSince1970: 1_800_000_000), isClosedLoop: true)
+        XCTAssertNil(watchface.loopStatusToSend(status))
+        XCTAssertEqual(watchface.remote.loopStatusToSend(status)?.insulinOnBoard, 1.25)
+        let reading = LupedReading(date: Date(timeIntervalSince1970: 1_800_000_060), milligramsPerDeciliter: 120, trend: nil)
+        let payload = try XCTUnwrap(LupedPayload(readings: [reading, reading], unit: .milligramsPerDeciliter, fullScreen: false, loopStatus: status, settings: watchface.remote, remote: true))
+        XCTAssertEqual(payload.readingCount, 0, "no history for the remote")
+        XCTAssertTrue(payload.data.contains(",1.3,12,"), payload.data)
+    }
+
     // Luped Remote is served by default; turning it off is kept.
     func testRemoteSettingRoundTrips() {
         XCTAssertTrue(LupedSettings().remoteEnabled)

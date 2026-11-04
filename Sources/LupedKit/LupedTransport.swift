@@ -216,6 +216,8 @@ public final class LupedTransport: PebbleTransportDelegate {
     }
 
     private var latestPayload: LupedPayload?
+    /// The host's snapshot `latestPayload` was built from, to rebuild it for the other app.
+    private var latestSnapshot: LupedSnapshot?
     /// Incremented on every send request; a send completing with an older
     /// value means another request arrived while it was in flight.
     private var requestGeneration = 0
@@ -294,6 +296,9 @@ public final class LupedTransport: PebbleTransportDelegate {
         record(.info, "Sending to \(app.name) from now on: \(reason)")
         dropUnacknowledgedMessages(because: "\(foreground.name) is no longer running")
         foreground = app
+        if let latestSnapshot {
+            latestPayload = payload(from: latestSnapshot, for: app)
+        }
         deliveredPayload = nil
         pushRetry?.cancel()
         pushRetry = nil
@@ -352,7 +357,8 @@ public final class LupedTransport: PebbleTransportDelegate {
             return
         }
 
-        guard let payload = LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: settings.fullScreen, hostAlertState: snapshot.hostAlertState, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: settings.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(settings.shownStatusLine, therapy: snapshot.therapy, unit: snapshot.unit), hostName: hostName, settings: settings) else {
+        latestSnapshot = snapshot
+        guard let payload = payload(from: snapshot, for: foreground) else {
             record(.info, String(format: "No usable CGM readings among %ld stored samples; nothing to send", snapshot.storedSampleCount))
             return
         }
@@ -370,6 +376,13 @@ public final class LupedTransport: PebbleTransportDelegate {
         }
     }
 
+    /// The `DATA` for `app`: the watchface's follows its display settings;
+    /// Luped Remote always gets IOB, COB and loop status, and no history.
+    private func payload(from snapshot: LupedSnapshot, for app: LupedWatchApp) -> LupedPayload? {
+        let shown = app == .remote ? settings.remote : settings
+        return LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: shown.fullScreen, hostAlertState: snapshot.hostAlertState, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: shown.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(shown.shownStatusLine, therapy: snapshot.therapy, unit: snapshot.unit), hostName: hostName, settings: shown, remote: app == .remote)
+    }
+
     /// Sends now, or after a short wait so a reading and the loop result that
     /// follows it, or several loop-only changes, go in one message.
     private func scheduleSend(_ payload: LupedPayload) {
@@ -377,7 +390,8 @@ public final class LupedTransport: PebbleTransportDelegate {
         if let pending = alertReading, Date().timeIntervalSince(pending.sentAt) > LupedDelivery.alertReadingWindow {
             alertReading = nil
         }
-        let timing = Date() < sendImmediatelyUntil ? .now : LupedDelivery.timing(new: payload, previous: previous, needsLoopStatus: settings.needsLoopStatus, alertReading: alertReading?.readingDate)
+        let needsLoopStatus = foreground == .remote || settings.needsLoopStatus
+        let timing = Date() < sendImmediatelyUntil ? .now : LupedDelivery.timing(new: payload, previous: previous, needsLoopStatus: needsLoopStatus, alertReading: alertReading?.readingDate)
         if LupedDelivery.alertChanged(new: payload, previous: previous) {
             alertReading = (payload.latestDate, Date())
         } else if let pending = alertReading, payload.latestDate > pending.readingDate {
@@ -480,6 +494,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             pushRetry?.cancel()
             pushRetry = nil
             latestPayload = nil
+            latestSnapshot = nil
             record(.info, "Pebble support off: Bluetooth service removed")
             return
         }
