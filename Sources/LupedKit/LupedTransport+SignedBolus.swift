@@ -53,7 +53,7 @@ extension LupedTransport {
         let action = LupedSignedBolus.actions.first { command.hasPrefix($0 + ":") } ?? "signedbolus"
         guard let request = LupedSignedBolus(command: command) else {
             record(.error, "Signed bolus request refused: malformed (COMMAND \(command))")
-            queueResult("\(action):refused")
+            queueResult(LupedResultReason.notVerified.appended(to: "\(action):refused"))
             return
         }
         switch bolusAuth.verify(request, now: Date()) {
@@ -67,9 +67,9 @@ extension LupedTransport {
             results.forEach(queueResult)
         case .inProgress:
             record(.info, "Signed bolus request #\(request.sequence) is still being handled: its result follows")
-        case .refuse(let reason):
+        case .refuse(let reason, let short):
             record(.error, "Signed bolus request refused: \(reason)\(bolusAuth.keyNote(issuingKeys: issuesBolusKey)) (COMMAND \(command))")
-            queueResult("\(action):refused")
+            queueResult(short.appended(to: "\(action):refused"))
         }
     }
 }

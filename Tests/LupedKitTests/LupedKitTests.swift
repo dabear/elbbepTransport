@@ -638,3 +638,18 @@ final class LupedAlertStateTests: XCTestCase {
         XCTAssertEqual(LupedPayload.alertStateName(-1), "low, Watch Alarms is off")
     }
 }
+
+final class LupedResultReasonTests: XCTestCase {
+    // The reason is a third field: a watch that reads two fields still gets
+    // the action and outcome, and no reason can split the answer further.
+    func testTheReasonIsAThirdFieldOldWatchesIgnore() {
+        let result = LupedResultReason.tooSoon.appended(to: "carbs:refused")
+        XCTAssertEqual(result, "carbs:refused:too soon")
+        XCTAssertEqual(Array(result.split(separator: ":").prefix(2)), ["carbs", "refused"])
+        XCTAssertEqual(LupedResultReason.tooSoon.appended(to: "carbs:ok"), "carbs:ok", "watches buzz done only for answers ending in :ok")
+        for reason in LupedResultReason.allCases {
+            XCTAssertFalse(reason.rawValue.contains(":"), reason.rawValue)
+            XCTAssertLessThanOrEqual(reason.rawValue.count, 17, "fits one line on the watch")
+        }
+    }
+}

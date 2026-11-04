@@ -817,9 +817,12 @@ public final class LupedTransport: PebbleTransportDelegate {
 
     /// Tells the watch how one of its requests ended (`RESULT`), kept short as
     /// `<action>:<outcome>`, e.g. `mute:ok` or `signedbolus:refused`, so the
-    /// watchface can react to it. The reason goes to the communication log.
-    /// Sent after any pending reading; the last few are kept until a session opens.
-    public func sendResult(_ result: String) {
+    /// watchface can react to it, and with `reason` why it wasn't done
+    /// (`carbs:refused:too soon`; see `LupedResultReason`). The full reason
+    /// goes to the communication log. Sent after any pending reading; the last
+    /// few are kept until a session opens.
+    public func sendResult(_ result: String, reason: LupedResultReason? = nil) {
+        let result = reason?.appended(to: result) ?? result
         bolusAuth.record(result: result)
         queueResult(result)
     }

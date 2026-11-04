@@ -146,6 +146,12 @@ The remote always gets IOB, COB and the loop's status, whatever the watchface
 shows, and no graph history. `status.remoteLink` and `status.foreground` show the remote's session and where
 messages go; watch diagnostics come from the watchface only.
 
+`sendResult(_:reason:)` answers a watch request (`RESULT`, `<action>:<outcome>`),
+and with a `LupedResultReason` says why it wasn't done as a third field
+(`carbs:refused:too soon`). Watches read the first two fields, so older ones
+are unaffected; Luped Remote 0.1.1 shows the reason. An `ok` answer never gets
+one.
+
 The Luped watchface, Luped Remote and their `DATA` protocol live in
 [LupedPebbleWatchFace](https://github.com/dabear/LupedPebbleWatchFace)
 (`variants/luped/PROTOCOL.md`).

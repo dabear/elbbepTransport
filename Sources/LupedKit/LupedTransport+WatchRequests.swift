@@ -20,7 +20,7 @@ extension LupedTransport {
             handlePresetRequest(action, kind: "temp target", callback: tempTargetRequested, request: request, confirmed: confirmed, requestedAt: requestedAt, command: command)
         case .mute(nil), .carbs(nil), .override(nil), .tempTarget(nil):
             record(.error, "Watch request without a valid \(request.action == "mute" ? "duration" : request.action == "carbs" ? "amount" : "preset") ignored (COMMAND \(command))")
-            sendResult("\(request.action):failed")
+            sendResult("\(request.action):failed", reason: .invalidAmount)
         }
     }
 

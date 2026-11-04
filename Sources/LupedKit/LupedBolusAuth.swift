@@ -90,7 +90,7 @@ struct LupedBolusAuth {
         case resend([String])
         /// Still being handled: its results follow.
         case inProgress
-        case refuse(String)
+        case refuse(String, LupedResultReason)
     }
 
     struct Session {
@@ -145,15 +145,15 @@ struct LupedBolusAuth {
 
     mutating func verify(_ request: LupedSignedBolus, now: Date) -> Verdict {
         guard var session else {
-            return .refuse("no bolus session yet (the watch has no key)")
+            return .refuse("no bolus session yet (the watch has no key)", .oldKey)
         }
         guard request.sessionID == session.id else {
-            return .refuse("signed for another session (\(request.sessionID)); the current one is \(session.id)")
+            return .refuse("signed for another session (\(request.sessionID)); the current one is \(session.id)", .oldKey)
         }
         let expected = Array(HMAC<SHA256>.authenticationCode(for: Data(request.canonical.utf8), using: session.key).prefix(Self.macLength))
         // Constant time: every byte is compared whatever the first difference.
         guard zip(expected, request.mac).reduce(UInt8(0), { $0 | ($1.0 ^ $1.1) }) == 0 else {
-            return .refuse("signature doesn't match")
+            return .refuse("signature doesn't match", .notVerified)
         }
         if let stored = session.results.first(where: { $0.sequence == request.sequence }) {
             return .resend(stored.results)
@@ -162,14 +162,14 @@ struct LupedBolusAuth {
             return .inProgress
         }
         guard request.sequence > session.lastSequence else {
-            return .refuse("sequence \(request.sequence) is not after \(session.lastSequence)")
+            return .refuse("sequence \(request.sequence) is not after \(session.lastSequence)", .notVerified)
         }
         let age = now.timeIntervalSince(request.confirmedAt)
         guard age <= Self.maximumAge else {
-            return .refuse(String(format: "confirmed %.0f s ago, more than %.0f s", age, Self.maximumAge))
+            return .refuse(String(format: "confirmed %.0f s ago, more than %.0f s", age, Self.maximumAge), .tooOld)
         }
         guard -age <= Self.maximumClockSkew else {
-            return .refuse(String(format: "confirmed %.0f s in the future", -age))
+            return .refuse(String(format: "confirmed %.0f s in the future", -age), .tooOld)
         }
         session.lastSequence = request.sequence
         session.open = (request.sequence, request.gramsText != nil, [])
