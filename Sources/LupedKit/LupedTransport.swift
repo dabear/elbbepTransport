@@ -589,7 +589,11 @@ public final class LupedTransport: PebbleTransportDelegate {
         }
         resendIfCrossed()
         if started {
-            dropUnacknowledgedMessages(because: "\(sender.name) restarted")
+            // A switch already dropped what went to the other app, and what it
+            // sent since (the new app's key) went to this run.
+            if !switched {
+                dropUnacknowledgedMessages(because: "\(sender.name) restarted")
+            }
             // The new watchface run has none of what the previous one acknowledged.
             deliveredPayload = nil
             watchfaceStartedAt = Date()
@@ -696,7 +700,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         let elapsed = Int(Date().timeIntervalSince(push.sentAt) * 1_000)
         let readingTime = DateFormatter.localizedString(from: push.payload.latestDate, dateStyle: .none, timeStyle: .medium)
         if acknowledged {
-            record(.fromWatch, "#\(transactionID) ACK in \(elapsed) ms · watch stored the \(readingTime) reading, \(push.payload.readingCount == 0 ? "no history (Large Glucose)" : "\(push.payload.readingCount) history points")\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
+            record(.fromWatch, "#\(transactionID) ACK in \(elapsed) ms · watch stored the \(readingTime) reading, \(push.payload.readingCount == 0 ? (foreground == .remote ? "no history (Luped Remote)" : "no history (Large Glucose)") : "\(push.payload.readingCount) history points")\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
             deliveredGeneration = push.generation
             deliveredPayload = push.payload
             if bolusKeyOnDelivery {
