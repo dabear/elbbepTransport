@@ -129,7 +129,7 @@ its ring from the state (red for lows, amber for high) and has no thresholds of
 its own.
 
 The Luped watchface and its `DATA` protocol live in
-[CrimsonBearPebbleWatchFace](https://github.com/dabear/CrimsonBearPebbleWatchFace)
+[LupedPebbleWatchFace](https://github.com/dabear/LupedPebbleWatchFace)
 (`variants/luped/PROTOCOL.md`).
 
 ## Tests
