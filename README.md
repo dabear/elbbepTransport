@@ -134,7 +134,7 @@ step with the host and stops when the user acknowledges on the phone. It colours
 its ring from the state (red for lows, amber for high) and has no thresholds of
 its own.
 
-LupedKit also serves Luped Remote (`LupedSettings.remoteUUID`), a watchapp that
+LupedKit also serves Luped Remote (`LupedSettings.remoteUUID`, by default `defaultRemoteUUID`), a watchapp that
 shows the same reading and sends the watchface's requests from its buttons. It
 gets a session of its own while `remoteEnabled` is on (the default). The watch
 runs one of the two at a time, so LupedKit sends to the app that last started

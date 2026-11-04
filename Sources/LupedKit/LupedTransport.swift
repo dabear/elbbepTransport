@@ -266,13 +266,9 @@ public final class LupedTransport: PebbleTransportDelegate {
         self.hostName = hostName
         self.settings = settings
         watchfaceTransport = PebbleTransport(isEnabled: settings.isEnabled, appUUID: settings.watchfaceUUID)
-        remoteTransport = PebbleTransport(isEnabled: Self.servesRemote(settings), appUUID: LupedSettings.remoteUUID)
+        remoteTransport = PebbleTransport(isEnabled: settings.servesRemote, appUUID: settings.remoteUUID)
         watchfaceTransport.delegate = self
         remoteTransport.delegate = self
-    }
-
-    private static func servesRemote(_ settings: LupedSettings) -> Bool {
-        settings.isEnabled && settings.remoteEnabled
     }
 
     private func transport(for app: LupedWatchApp) -> PebbleTransport {
@@ -470,9 +466,15 @@ public final class LupedTransport: PebbleTransportDelegate {
         if settings.remoteEnabled != old.remoteEnabled {
             record(.info, "Luped Remote \(settings.remoteEnabled ? "on" : "off: it gets no watch session")")
         }
+        if settings.remoteUUID != old.remoteUUID {
+            record(.info, "Luped Remote UUID: \(settings.remoteUUID.uuidString.lowercased())")
+        }
+        if settings.isEnabled, settings.remoteEnabled, settings.remoteUUID == settings.watchfaceUUID {
+            record(.error, "Luped Remote has the watchface's UUID: it gets no watch session of its own")
+        }
         if settings.isEnabled != watchfaceTransport.isEnabled || settings.watchfaceUUID != watchfaceTransport.appUUID {
             applyLink()
-        } else if Self.servesRemote(settings) != remoteTransport.isEnabled {
+        } else if settings.servesRemote != remoteTransport.isEnabled || settings.remoteUUID != remoteTransport.appUUID {
             applyRemoteLink()
             Task { await refresh() }
         } else {
@@ -505,19 +507,18 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// Publishes or removes Luped Remote's service; without it, everything goes
     /// to the watchface.
     private func applyRemoteLink() {
-        let enabled = Self.servesRemote(settings)
-        guard enabled != remoteTransport.isEnabled else { return }
-        remoteTransport.reconfigure(isEnabled: enabled, appUUID: LupedSettings.remoteUUID)
-        if !enabled {
-            rejectedApps.remove(.remote)
-            switchForeground(to: .watchface, "Luped Remote's watch session was removed")
-        }
+        let enabled = settings.servesRemote
+        let uuid = settings.remoteUUID
+        guard enabled != remoteTransport.isEnabled || uuid != remoteTransport.appUUID else { return }
+        remoteTransport.reconfigure(isEnabled: enabled, appUUID: uuid)
+        rejectedApps.remove(.remote)
+        switchForeground(to: .watchface, enabled ? "Luped Remote's watch session moved to \(uuid.uuidString.lowercased())" : "Luped Remote's watch session was removed")
     }
 
     // MARK: - PebbleTransportDelegate
 
     public func pebbleTransport(_ source: PebbleTransport, log kind: PebbleLogKind, _ message: String) {
-        let message = app(of: source) == .remote ? "Luped Remote: " + message : message
+        let message = "\(app(of: source).logLabel): \(message)"
         switch kind {
         case .toWatch: record(.toWatch, message)
         case .fromWatch: record(.fromWatch, message)

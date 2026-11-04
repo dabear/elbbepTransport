@@ -17,12 +17,13 @@ public struct LupedSettings: Equatable {
         static let statusLine = "lupedPebbleStatusLine"
         static let loopRing = "lupedPebbleLoopRing"
         static let remoteEnabled = "lupedPebbleRemoteEnabled"
+        static let remoteUUID = "lupedPebbleRemoteUUID"
     }
 
     public static let defaultWatchfaceUUID = UUID(uuidString: "bf32924c-4839-449e-9e56-ee190249acb2")!
     /// Luped Remote, the watchapp that shows the same reading and sends the
     /// watchface's requests from its buttons.
-    public static let remoteUUID = UUID(uuidString: "738255f4-b58b-41cd-a7ae-27fc80e81fcb")!
+    public static let defaultRemoteUUID = UUID(uuidString: "738255f4-b58b-41cd-a7ae-27fc80e81fcb")!
 
     /// Whether a Pebble has been added; off until then.
     public var isEnabled: Bool
@@ -42,6 +43,8 @@ public struct LupedSettings: Equatable {
     /// Luped Remote gets its own watch session next to the watchface's. Its
     /// requests are the watchface's, so the host's own switches decide them.
     public var remoteEnabled: Bool
+    /// The remote's app UUID, like `watchfaceUUID` for a build of its own.
+    public var remoteUUID: UUID
 
     public init(
         isEnabled: Bool = false,
@@ -50,7 +53,8 @@ public struct LupedSettings: Equatable {
         fullScreen: Bool = false,
         statusLine: LupedStatusLine = .iobAndCob,
         loopRing: Bool = true,
-        remoteEnabled: Bool = true
+        remoteEnabled: Bool = true,
+        remoteUUID: UUID = LupedSettings.defaultRemoteUUID
     ) {
         self.isEnabled = isEnabled
         self.watchfaceUUID = watchfaceUUID
@@ -59,6 +63,13 @@ public struct LupedSettings: Equatable {
         self.statusLine = statusLine
         self.loopRing = loopRing
         self.remoteEnabled = remoteEnabled
+        self.remoteUUID = remoteUUID
+    }
+
+    /// Whether Luped Remote gets a watch session: it's on, and its UUID isn't
+    /// the watchface's (one UUID can have only one session).
+    public var servesRemote: Bool {
+        isEnabled && remoteEnabled && remoteUUID != watchfaceUUID
     }
 
     /// The status line the watch shows: none with Large Glucose, which has no
@@ -112,7 +123,8 @@ public struct LupedSettings: Equatable {
             fullScreen: rawValue[Key.fullScreen] as? Bool ?? defaults.fullScreen,
             statusLine: (rawValue[Key.statusLine] as? String).flatMap(LupedStatusLine.init(rawValue:)) ?? defaults.statusLine,
             loopRing: rawValue[Key.loopRing] as? Bool ?? defaults.loopRing,
-            remoteEnabled: rawValue[Key.remoteEnabled] as? Bool ?? defaults.remoteEnabled
+            remoteEnabled: rawValue[Key.remoteEnabled] as? Bool ?? defaults.remoteEnabled,
+            remoteUUID: (rawValue[Key.remoteUUID] as? String).flatMap(UUID.init(uuidString:)) ?? defaults.remoteUUID
         )
     }
 
@@ -125,6 +137,7 @@ public struct LupedSettings: Equatable {
             Key.statusLine: statusLine.rawValue,
             Key.loopRing: loopRing,
             Key.remoteEnabled: remoteEnabled,
+            Key.remoteUUID: remoteUUID.uuidString.lowercased(),
         ]
     }
 }

@@ -449,7 +449,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
                 sendPacket(type: PPoGATT.typeResetComplete, sequence: 0)
             }
             sessionState = .open
-            record(.info, "Watch connected (PPoGATT session open)")
+            record(.info, "Connected (PPoGATT session open)")
             delegate?.pebbleTransportSessionDidOpen(self)
         case PPoGATT.typeAck:
             guard case .open = sessionState else { return }
@@ -631,7 +631,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         if case .closed = sessionState {
             return
         }
-        record(.info, String(format: "PPoGATT session closed: %@", reason))
+        record(.info, String(format: "Disconnected (PPoGATT session closed: %@)", reason))
         resetSessionState()
         sessionState = .closed
     }

@@ -224,6 +224,18 @@ final class LupedSettingsTests: XCTestCase {
         XCTAssertTrue(payload.data.contains(",1.3,12,"), payload.data)
     }
 
+    // The remote's UUID can be changed like the watchface's, but never to the
+    // watchface's own: one UUID has one watch session.
+    func testRemoteUUIDRoundTripsAndNeverSharesTheWatchfaces() {
+        let uuid = UUID()
+        XCTAssertEqual(LupedSettings(rawValue: LupedSettings(remoteUUID: uuid).rawValue).remoteUUID, uuid)
+        XCTAssertEqual(LupedSettings(rawValue: ["lupedPebbleRemoteUUID": "nope"]).remoteUUID, LupedSettings.defaultRemoteUUID)
+        XCTAssertTrue(LupedSettings(isEnabled: true).servesRemote)
+        XCTAssertFalse(LupedSettings(isEnabled: true, remoteUUID: LupedSettings.defaultWatchfaceUUID).servesRemote)
+        XCTAssertFalse(LupedSettings(isEnabled: true, remoteEnabled: false).servesRemote)
+        XCTAssertFalse(LupedSettings(isEnabled: false).servesRemote)
+    }
+
     // Luped Remote is served by default; turning it off is kept.
     func testRemoteSettingRoundTrips() {
         XCTAssertTrue(LupedSettings().remoteEnabled)

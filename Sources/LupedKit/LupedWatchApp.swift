@@ -18,6 +18,14 @@ public enum LupedWatchApp: Equatable, Hashable {
         }
     }
 
+    /// The prefix of the app's lines in the communication log.
+    var logLabel: String {
+        switch self {
+        case .watchface: "Watchface"
+        case .remote: "Luped Remote"
+        }
+    }
+
     var other: LupedWatchApp {
         self == .watchface ? .remote : .watchface
     }
