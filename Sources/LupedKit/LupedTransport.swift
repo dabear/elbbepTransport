@@ -729,21 +729,22 @@ public final class LupedTransport: PebbleTransportDelegate {
                 }
                 if find != nil {
                     pendingFind = nil
-                    findNotDelivered(NSLocalizedString("neither Luped CGM nor Luped Remote is running on the watch", bundle: .lupedKit, comment: "Pebble find note reason: no Luped app running"))
+                    findNotDelivered("neither Luped CGM nor Luped Remote is running on the watch", noLupedApp: true)
                     sendIfNeeded()
                     return
                 }
             }
             if acknowledged, let find {
-                status.findNote = find.seconds > 0
-                    ? String(format: foreground == .remote
-                        ? NSLocalizedString("Luped Remote is buzzing for %d s. Press any button on the watch to stop.", bundle: .lupedKit, comment: "Pebble find note: delivered to the remote (seconds)")
-                        : NSLocalizedString("Luped CGM is buzzing for %d s. Press any button on the watch to stop.", bundle: .lupedKit, comment: "Pebble find note: delivered to the watchface (seconds)"), find.seconds)
-                    : NSLocalizedString("Stopped.", bundle: .lupedKit, comment: "Pebble find note: stopped")
+                record(.info, find.seconds > 0 ? "\(foreground.name) took Find my Pebble (\(find.seconds) s)" : "\(foreground.name) stopped Find my Pebble")
+                status.findNote = find.seconds == 0
+                    ? NSLocalizedString("Stopped.", bundle: .lupedKit, comment: "Pebble find note: stopped")
+                    : find.seconds == 60
+                    ? NSLocalizedString("The watch is buzzing for a minute. Press a button on it to stop.", bundle: .lupedKit, comment: "Pebble find note: delivered for the default minute")
+                    : String(format: NSLocalizedString("The watch is buzzing for %d seconds. Press a button on it to stop.", bundle: .lupedKit, comment: "Pebble find note: delivered (seconds)"), find.seconds)
             }
             if pending.command == "COMMAND diagnostics" {
                 if !acknowledged {
-                    status.watchInfoNote = NSLocalizedString("The watch rejected the request; the watchface is probably not running.", bundle: .lupedKit, comment: "Pebble watch info note: request rejected")
+                    status.watchInfoNote = NSLocalizedString("Open Luped CGM on the watch, then try again.", bundle: .lupedKit, comment: "Pebble watch info note: request rejected")
                 } else {
                     awaitDiagnosticsReply()
                 }
@@ -795,7 +796,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             }
             if pendingFind != nil {
                 pendingFind = nil
-                findNotDelivered(NSLocalizedString("neither Luped CGM nor Luped Remote is running on the watch", bundle: .lupedKit, comment: "Pebble find note reason: no Luped app running"))
+                findNotDelivered("neither Luped CGM nor Luped Remote is running on the watch", noLupedApp: true)
             }
             status.lastRejectedAt = Date()
             scheduleRetry()
@@ -842,7 +843,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         record(.info, "Watch info requested")
         status.watchInfoNote = nil
         guard transport.isSessionOpen else {
-            status.watchInfoNote = NSLocalizedString("The watch is not connected.", bundle: .lupedKit, comment: "Pebble watch info note: no session")
+            status.watchInfoNote = NSLocalizedString("The watch isn't connected.", bundle: .lupedKit, comment: "Pebble watch info note: no session")
             return
         }
         // Only the watchface reports diagnostics.
@@ -869,9 +870,13 @@ public final class LupedTransport: PebbleTransportDelegate {
         sendIfNeeded()
     }
 
-    private func findNotDelivered(_ reason: String) {
+    /// Logs why Find my Pebble wasn't delivered, and tells the user what to do:
+    /// open a Luped app when neither is running, otherwise that the watch didn't answer.
+    private func findNotDelivered(_ reason: String, noLupedApp: Bool = false) {
         record(.error, "Find my Pebble not delivered: \(reason)")
-        status.findNote = String(format: NSLocalizedString("Not delivered: %@.", bundle: .lupedKit, comment: "Pebble find note: not delivered (reason)"), reason)
+        status.findNote = noLupedApp
+            ? NSLocalizedString("Open Luped on the watch, then try again.", bundle: .lupedKit, comment: "Pebble find note: neither Luped app is open on the watch")
+            : NSLocalizedString("No answer from the watch.", bundle: .lupedKit, comment: "Pebble find note: the watch didn't answer")
     }
 
     /// Shows a diagnostics report the host saved from an earlier launch until the
@@ -986,7 +991,7 @@ public final class LupedTransport: PebbleTransportDelegate {
     private func sendPendingCommand() {
         if let find = pendingFind, Date().timeIntervalSince(find.requestedAt) > LupedFindRequest.expiry {
             pendingFind = nil
-            findNotDelivered(NSLocalizedString("the watch didn't take it within 30 s", bundle: .lupedKit, comment: "Pebble find note reason: expired"))
+            findNotDelivered("the watch didn't take it within 30 s")
         }
         guard pendingFind != nil || pendingBolusKey != nil || !pendingRemoteAnswers.isEmpty || diagnosticsRequested || !pendingResults.isEmpty, inflightPush == nil, inflightCommand == nil, transport.isSessionOpen else {
             return
@@ -1031,7 +1036,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             self.noteUndelivered(pending.command, "no reply")
             if self.inflightFind != nil {
                 self.inflightFind = nil
-                self.findNotDelivered(NSLocalizedString("no reply from the watch", bundle: .lupedKit, comment: "Pebble find note reason: no reply"))
+                self.findNotDelivered("no reply from the watch")
             }
             self.inflightCommand = nil
             self.sendIfNeeded()

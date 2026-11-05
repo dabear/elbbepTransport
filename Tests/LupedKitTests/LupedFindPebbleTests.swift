@@ -19,7 +19,8 @@ final class LupedFindPebbleTests: XCTestCase {
         XCTAssertEqual(count("#1 COMMAND findpebble:60 to Luped Remote", in: transport), 1)
 
         transport.pebbleTransport(remote, didReceiveReply: true, transactionID: 1, message: [])
-        XCTAssertEqual(transport.status.findNote, "Luped Remote is buzzing for 60 s. Press any button on the watch to stop.")
+        XCTAssertEqual(count("Luped Remote took Find my Pebble", in: transport), 1)
+        XCTAssertEqual(transport.status.findNote, "The watch is buzzing for a minute. Press a button on it to stop.")
     }
 
     func testSaysSoWhenNeitherAppIsRunning() async {
@@ -30,7 +31,7 @@ final class LupedFindPebbleTests: XCTestCase {
         // Luped Remote rejects the reading too.
         transport.pebbleTransport(remote, didReceiveReply: false, transactionID: 0, message: [])
 
-        XCTAssertEqual(transport.status.findNote, "Not delivered: neither Luped CGM nor Luped Remote is running on the watch.")
+        XCTAssertEqual(transport.status.findNote, "Open Luped on the watch, then try again.")
         XCTAssertEqual(count("#1 COMMAND findpebble", in: transport), 1, "not sent again")
     }
 
