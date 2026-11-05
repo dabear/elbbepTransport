@@ -16,13 +16,14 @@ final class LupedBolusAuthTests: XCTestCase {
     /// The command the watch sends, signed with `key` unless `mac` is given.
     private func command(
         _ action: String = "signedbolus", units: String = "1.5", grams: String? = "30",
+        absorption: String? = nil,
         confirmedAt: String = "1798000000", session: String? = nil, sequence: Int = 1,
         key: SymmetricKey? = nil, mac: String? = nil
     ) -> String {
         let session = session ?? sessionID
-        let canonical = LupedBolusAuth.canonical(sessionID: session, sequence: sequence, confirmedAt: confirmedAt, action: action, units: units, grams: grams)
+        let canonical = LupedBolusAuth.canonical(sessionID: session, sequence: sequence, confirmedAt: confirmedAt, action: action, units: units, grams: grams, absorption: absorption)
         let mac = mac ?? LupedBolusAuth.mac(canonical, key: key ?? self.key)
-        return "\(action):\(units)\(grams.map { ":\($0)" } ?? "")@\(confirmedAt)#\(session).\(sequence).\(mac)"
+        return "\(action):\(units)\(grams.map { ":\($0)" } ?? "")\(absorption.map { ":\($0)" } ?? "")@\(confirmedAt)#\(session).\(sequence).\(mac)"
     }
 
     private func verify(_ command: String, with auth: inout LupedBolusAuth, at time: Date? = nil) -> LupedBolusAuth.Verdict? {
@@ -52,6 +53,28 @@ final class LupedBolusAuthTests: XCTestCase {
         XCTAssertEqual(canonical, "v1|0123456789abcdef|1|1798000000|signedbolus|1.5|30")
         XCTAssertEqual(LupedBolusAuth.mac(canonical, key: key), "6eb19f16b120d0b9cdb6c36ea5eb56bf")
         XCTAssertEqual(LupedBolusAuth.canonical(sessionID: sessionID, sequence: 2, confirmedAt: "1798000000", action: "signedforcedbolus", units: "0.25", grams: nil), "v1|0123456789abcdef|2|1798000000|signedforcedbolus|0.25|")
+    }
+
+    // The absorption, when the watch sends one, is signed after the grams.
+    func testAbsorptionIsSigned() throws {
+        XCTAssertEqual(LupedBolusAuth.canonical(sessionID: sessionID, sequence: 1, confirmedAt: "1798000000", action: "signedbolus", units: "1.5", grams: "30", absorption: "slow"), "v1|0123456789abcdef|1|1798000000|signedbolus|1.5|30|slow")
+        var accepting = auth()
+        guard case .accept(let request) = verify(command(absorption: "slow"), with: &accepting) else {
+            return XCTFail("Not accepted")
+        }
+        XCTAssertEqual(request.grams, 30)
+        XCTAssertEqual(request.absorption, .slow)
+        XCTAssertNil(LupedSignedBolus(command: command())?.absorption, "Without one, the request is as before")
+
+        // Changing the absorption after signing breaks the signature.
+        var refusing = auth()
+        let tampered = command(absorption: "slow").replacingOccurrences(of: ":30:slow@", with: ":30:fast@")
+        guard case .refuse(_, .notVerified) = verify(tampered, with: &refusing) else {
+            return XCTFail("Accepted a changed absorption")
+        }
+        // Only fast, medium or slow, and only after grams.
+        XCTAssertNil(LupedSignedBolus(command: command(absorption: "quick")))
+        XCTAssertNil(LupedSignedBolus(command: command(grams: nil, absorption: "slow")))
     }
 
     // MARK: - Sessions

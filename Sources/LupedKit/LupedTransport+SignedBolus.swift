@@ -58,10 +58,10 @@ extension LupedTransport {
         }
         switch bolusAuth.verify(request, now: Date()) {
         case .accept(let request):
-            let carbs = request.grams.map { String(format: " with %g g of carbs", $0) } ?? ""
+            let carbs = request.grams.map { String(format: " with %g g of %@carbs", $0, request.absorption.map { "\($0.rawValue) " } ?? "") } ?? ""
             let confirmed = String(format: "confirmed %.0f s ago", Date().timeIntervalSince(request.confirmedAt))
             record(.fromWatch, String(format: "Watch asked for a %@ U %@%@, %@, signature valid (session %@, #%d)", request.unitsText, request.forced ? "forced bolus" : "bolus", carbs, confirmed, request.sessionID, request.sequence))
-            bolusRequested?(request.units, request.forced, request.grams, request.confirmedAt)
+            bolusRequested?(request.units, request.forced, request.grams, request.absorption, request.confirmedAt)
         case .resend(let results):
             record(.info, "Signed bolus request #\(request.sequence) already handled: its result sent again, not passed on")
             results.forEach(queueResult)

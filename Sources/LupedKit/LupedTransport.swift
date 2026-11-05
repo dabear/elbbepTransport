@@ -186,7 +186,7 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// the grams the watch chose and when the user confirmed them (see
     /// `LupedCommandTiming`; `nil` when the command didn't say). The host runs
     /// its own checks.
-    public var carbsRequested: ((_ grams: Double, _ requestedAt: Date?) -> Void)?
+    public var carbsRequested: ((_ grams: Double, _ absorption: LupedCarbAbsorption?, _ requestedAt: Date?) -> Void)?
     /// Called when the watch asks to start an override preset (`COMMAND
     /// override:<preset name or id>`) or end the running one (`override:cancel`),
     /// with when the user confirmed it (see `LupedCommandTiming`; `nil` when the
@@ -204,13 +204,13 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// (`carbs:<outcome>` first when there were carbs, then
     /// `signedbolus:<outcome>` or `signedforcedbolus:<outcome>`), so a resent
     /// request gets the same answer.
-    public var bolusRequested: ((_ units: Double, _ forced: Bool, _ grams: Double?, _ requestedAt: Date) -> Void)?
+    public var bolusRequested: ((_ units: Double, _ forced: Bool, _ grams: Double?, _ absorption: LupedCarbAbsorption?, _ requestedAt: Date) -> Void)?
     /// Called when Luped Remote asks what bolus the host would recommend with the
     /// carbs the user is about to add (`COMMAND recommend:<grams>`, 0 for none),
     /// before the user picks one. Nothing is to be added or delivered. Answer with
     /// `sendBolusRecommendation` or `sendBolusRecommendationRefusal`; without it,
     /// the request is answered `ignored`.
-    public var bolusRecommendationRequested: ((_ grams: Double) -> Void)?
+    public var bolusRecommendationRequested: ((_ grams: Double, _ absorption: LupedCarbAbsorption?) -> Void)?
     /// Whether to hand the watch a bolus session key. Off unless the host may
     /// take boluses from this watch; turning it off forgets the key.
     public var issuesBolusKey = false {

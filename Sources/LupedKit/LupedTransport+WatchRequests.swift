@@ -11,26 +11,26 @@ extension LupedTransport {
         case .mute(let minutes?):
             record(.fromWatch, "Watch asked to mute \(hostName) alerts for \(minutes) min\(confirmed) (COMMAND \(command))")
             alertMuteRequested?(TimeInterval(minutes * 60), requestedAt)
-        case .carbs(let grams?):
-            record(.fromWatch, String(format: "Watch asked to add %g g of carbs%@ (COMMAND %@)", grams, confirmed, command))
-            carbsRequested?(grams, requestedAt)
+        case .carbs(let grams?, let absorption):
+            record(.fromWatch, String(format: "Watch asked to add %g g of %@carbs%@ (COMMAND %@)", grams, absorption.map { "\($0.rawValue) " } ?? "", confirmed, command))
+            carbsRequested?(grams, absorption, requestedAt)
         case .override(let action?):
             handlePresetRequest(action, kind: "preset", callback: overrideRequested, request: request, confirmed: confirmed, requestedAt: requestedAt, command: command)
         case .tempTarget(let action?):
             handlePresetRequest(action, kind: "temp target", callback: tempTargetRequested, request: request, confirmed: confirmed, requestedAt: requestedAt, command: command)
-        case .recommend(let grams?):
-            record(.fromWatch, String(format: "Watch asked what bolus %@ would recommend with %g g of carbs (COMMAND %@)", hostName, grams, command))
+        case .recommend(let grams?, let absorption):
+            record(.fromWatch, String(format: "Watch asked what bolus %@ would recommend with %g g of %@carbs (COMMAND %@)", hostName, grams, absorption.map { "\($0.rawValue) " } ?? "", command))
             guard let bolusRecommendationRequested else {
                 record(.error, "Bolus recommendation request ignored: this plugin doesn't answer them")
                 sendBolusRecommendationRefusal(grams: grams, outcome: "ignored", reason: nil)
                 return
             }
-            bolusRecommendationRequested(grams)
-        case .recommend(nil):
+            bolusRecommendationRequested(grams, absorption)
+        case .recommend(nil, _):
             // Answered as RECOMMEND, not RESULT: only Luped Remote asks, and waits for it.
             record(.error, "Watch asked for a bolus recommendation without valid carbs (COMMAND \(command))")
             queueRecommendation(":failed:\(LupedResultReason.invalidAmount.rawValue)")
-        case .mute(nil), .carbs(nil), .override(nil), .tempTarget(nil):
+        case .mute(nil), .carbs(nil, _), .override(nil), .tempTarget(nil):
             record(.error, "Watch request without a valid \(request.action == "mute" ? "duration" : request.action == "carbs" ? "amount" : "preset") ignored (COMMAND \(command))")
             sendResult("\(request.action):failed", reason: .invalidAmount)
         }

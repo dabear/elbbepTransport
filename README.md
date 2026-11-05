@@ -152,6 +152,12 @@ and with a `LupedResultReason` says why it wasn't done as a third field
 are unaffected; Luped Remote 0.1.1 shows the reason. An `ok` answer never gets
 one.
 
+Carbs from the watch may say how fast they are absorbed (`fast`, `medium` or
+`slow`, `LupedCarbAbsorption`), after the grams of `carbs:`, `recommend:` and a
+signed bolus (whose signature then covers it); `carbsRequested`,
+`bolusRequested` and `bolusRecommendationRequested` pass it on, `nil` when the
+watch didn't say.
+
 `bolusRecommendationRequested` is called when Luped Remote asks what bolus the
 host would recommend with the carbs the user is about to add
 (`COMMAND recommend:<grams>`, 0 for none), before a bolus is picked; nothing is

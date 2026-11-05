@@ -21,19 +21,27 @@ public struct LupedCommandTiming: Equatable {
     }
 }
 
+/// How fast carbs from the watch are absorbed (`fast`, `medium` or `slow`),
+/// optional after the grams of `carbs:`, `recommend:` and a signed bolus.
+public enum LupedCarbAbsorption: String, Equatable, Sendable, CaseIterable {
+    case fast
+    case medium
+    case slow
+}
+
 /// An unsigned request from the watch, `nil` inside when its argument is
-/// missing or invalid: `mute:<minutes>` (above zero), `carbs:<grams>` (above
+/// missing or invalid: `mute:<minutes>` (above zero), `carbs:<grams>[:<absorption>]` (above
 /// zero), `override:<preset name or id>` or `override:cancel`, and
 /// `temptarget:<preset name or id>` or `temptarget:cancel`, and
-/// `recommend:<grams>` (zero or more: the carbs the user is about to add), which
+/// `recommend:<grams>[:<absorption>]` (zero or more: the carbs the user is about to add), which
 /// asks what bolus the host would recommend and changes nothing. Boluses are
 /// only ever signed (`LupedSignedBolus`).
 enum LupedWatchRequest: Equatable {
     case mute(minutes: Int?)
-    case carbs(Double?)
+    case carbs(Double?, absorption: LupedCarbAbsorption? = nil)
     case override(LupedPresetAction?)
     case tempTarget(LupedPresetAction?)
-    case recommend(grams: Double?)
+    case recommend(grams: Double?, absorption: LupedCarbAbsorption? = nil)
 
     init?(command: String) {
         let parts = command.split(separator: ":", maxSplits: 1).map(String.init)
@@ -43,16 +51,29 @@ enum LupedWatchRequest: Equatable {
         case "mute":
             self = .mute(minutes: argument.flatMap { Int($0) }.flatMap { $0 > 0 ? $0 : nil })
         case "carbs":
-            self = .carbs(argument.flatMap(Double.init).flatMap { $0.isFinite && $0 > 0 ? $0 : nil })
+            let (grams, absorption) = Self.grams(argument, allowingZero: false)
+            self = .carbs(grams, absorption: absorption)
         case "override":
             self = .override(preset)
         case "temptarget":
             self = .tempTarget(preset)
         case "recommend":
-            self = .recommend(grams: argument.flatMap(Double.init).flatMap { $0.isFinite && $0 >= 0 ? $0 : nil })
+            let (grams, absorption) = Self.grams(argument, allowingZero: true)
+            self = .recommend(grams: grams, absorption: absorption)
         default:
             return nil
         }
+    }
+
+    /// `<grams>[:<absorption>]`: the grams `nil` when either part is invalid.
+    private static func grams(_ argument: String?, allowingZero: Bool) -> (Double?, LupedCarbAbsorption?) {
+        let parts = argument?.split(separator: ":", omittingEmptySubsequences: false).map(String.init) ?? []
+        guard parts.count == 1 || parts.count == 2,
+              let grams = Double(parts[0]), grams.isFinite, allowingZero ? grams >= 0 : grams > 0
+        else { return (nil, nil) }
+        guard parts.count == 2 else { return (grams, nil) }
+        guard let absorption = LupedCarbAbsorption(rawValue: parts[1]) else { return (nil, nil) }
+        return (grams, absorption)
     }
 
     /// The `<action>` of the request's `RESULT`.

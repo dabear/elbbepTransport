@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// A signed bolus request from the watch:
-/// `<action>:<units>[:<grams>]@<confirmedAt>#<sid>.<seq>.<mac>`, where the
+/// `<action>:<units>[:<grams>[:<absorption>]]@<confirmedAt>#<sid>.<seq>.<mac>`, where the
 /// action is `signedbolus` or `signedforcedbolus`. Every field is kept as the
 /// raw text the watch sent, so the MAC is checked over exactly what was signed.
 struct LupedSignedBolus: Equatable {
@@ -11,6 +11,8 @@ struct LupedSignedBolus: Equatable {
     let action: String
     let unitsText: String
     let gramsText: String?
+    /// The carbs' absorption, only with grams.
+    let absorptionText: String?
     let confirmedAtText: String
     let sessionID: String
     let sequence: Int
@@ -19,11 +21,13 @@ struct LupedSignedBolus: Equatable {
     var forced: Bool { action == "signedforcedbolus" }
     var units: Double { Double(unitsText)! }
     var grams: Double? { gramsText.map { Double($0)! } }
+    var absorption: LupedCarbAbsorption? { absorptionText.flatMap(LupedCarbAbsorption.init) }
     var confirmedAt: Date { Date(timeIntervalSince1970: TimeInterval(Int(confirmedAtText)!)) }
 
-    /// The signed text: `v1|<sid>|<seq>|<confirmedAt>|<action>|<units>|<grams or empty>`.
+    /// The signed text: `v1|<sid>|<seq>|<confirmedAt>|<action>|<units>|<grams or empty>`,
+    /// then `|<absorption>` when the request has one.
     var canonical: String {
-        LupedBolusAuth.canonical(sessionID: sessionID, sequence: sequence, confirmedAt: confirmedAtText, action: action, units: unitsText, grams: gramsText)
+        LupedBolusAuth.canonical(sessionID: sessionID, sequence: sequence, confirmedAt: confirmedAtText, action: action, units: unitsText, grams: gramsText, absorption: absorptionText)
     }
 
     /// Whether the command names a signed bolus at all; `init` then says whether it is well formed.
@@ -41,10 +45,11 @@ struct LupedSignedBolus: Equatable {
         guard timed.count == 2 else { return nil }
         let request = timed[0].split(separator: ":", omittingEmptySubsequences: false).map(String.init)
         let auth = signature[1].split(separator: ".", omittingEmptySubsequences: false).map(String.init)
-        guard request.count == 2 || request.count == 3, auth.count == 3,
+        guard (2...4).contains(request.count), auth.count == 3,
               Self.actions.contains(request[0]),
               Self.matches(request[1], #"(0|[1-9][0-9]?)(\.[0-9]{1,2})?"#), let units = Double(request[1]), units > 0,
               request.count == 2 || Self.matches(request[2], "[1-9][0-9]{0,2}"),
+              request.count < 4 || LupedCarbAbsorption(rawValue: request[3]) != nil,
               Self.matches(String(timed[1]), "[1-9][0-9]{0,11}"),
               Self.matches(auth[0], "[0-9a-f]{16}"),
               Self.matches(auth[1], "[1-9][0-9]{0,8}"), let sequence = Int(auth[1]),
@@ -52,7 +57,8 @@ struct LupedSignedBolus: Equatable {
         else { return nil }
         action = request[0]
         unitsText = request[1]
-        gramsText = request.count == 3 ? request[2] : nil
+        gramsText = request.count >= 3 ? request[2] : nil
+        absorptionText = request.count == 4 ? request[3] : nil
         confirmedAtText = String(timed[1])
         sessionID = auth[0]
         self.sequence = sequence
@@ -196,8 +202,8 @@ struct LupedBolusAuth {
         self.session = session
     }
 
-    static func canonical(sessionID: String, sequence: Int, confirmedAt: String, action: String, units: String, grams: String?) -> String {
-        "v1|\(sessionID)|\(sequence)|\(confirmedAt)|\(action)|\(units)|\(grams ?? "")"
+    static func canonical(sessionID: String, sequence: Int, confirmedAt: String, action: String, units: String, grams: String?, absorption: String? = nil) -> String {
+        "v1|\(sessionID)|\(sequence)|\(confirmedAt)|\(action)|\(units)|\(grams ?? "")" + (absorption.map { "|\($0)" } ?? "")
     }
 
     /// The watch's side, for tests: the MAC to send for `canonical`.

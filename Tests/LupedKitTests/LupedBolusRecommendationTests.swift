@@ -13,6 +13,13 @@ final class LupedBolusRecommendationTests: XCTestCase {
         XCTAssertEqual(LupedWatchRequest(command: "recommend:x"), .recommend(grams: nil))
         XCTAssertEqual(LupedWatchRequest(command: "recommend"), .recommend(grams: nil))
         XCTAssertEqual(LupedWatchRequest(command: "recommend:10")?.action, "recommend")
+        XCTAssertEqual(LupedWatchRequest(command: "recommend:10:slow"), .recommend(grams: 10, absorption: .slow))
+        XCTAssertEqual(LupedWatchRequest(command: "recommend:0:fast"), .recommend(grams: 0, absorption: .fast))
+        XCTAssertEqual(LupedWatchRequest(command: "recommend:10:quick"), .recommend(grams: nil))
+        XCTAssertEqual(LupedWatchRequest(command: "carbs:30:medium"), .carbs(30, absorption: .medium))
+        XCTAssertEqual(LupedWatchRequest(command: "carbs:30"), .carbs(30, absorption: nil))
+        XCTAssertEqual(LupedWatchRequest(command: "carbs:30:"), .carbs(nil))
+        XCTAssertEqual(LupedWatchRequest(command: "carbs:30:slow:x"), .carbs(nil))
     }
 
     func testNumbersForTheWatch() {
@@ -26,7 +33,7 @@ final class LupedBolusRecommendationTests: XCTestCase {
     func testAnswerGoesToLupedRemote() async throws {
         let transport = try await remoteRunning()
         var asked: [Double] = []
-        transport.bolusRecommendationRequested = { grams in
+        transport.bolusRecommendationRequested = { grams, _ in
             asked.append(grams)
             transport.sendBolusRecommendation(grams: grams, units: 0.45, maximumBolus: 5)
         }
@@ -45,7 +52,7 @@ final class LupedBolusRecommendationTests: XCTestCase {
 
     func testInvalidCarbsAreAnsweredAsRecommend() async throws {
         let transport = try await remoteRunning()
-        transport.bolusRecommendationRequested = { _ in XCTFail("not passed on") }
+        transport.bolusRecommendationRequested = { _, _ in XCTFail("not passed on") }
         receive(command: "recommend:-1", from: transport.remoteTransport, on: transport)
 
         XCTAssertEqual(sent(transport), ["#1 RECOMMEND :failed:invalid amount"])
@@ -55,7 +62,7 @@ final class LupedBolusRecommendationTests: XCTestCase {
     func testAnswerIsDroppedOnceLupedRemoteClosed() async throws {
         let transport = try await remoteRunning()
         var answer: (() -> Void)?
-        transport.bolusRecommendationRequested = { grams in
+        transport.bolusRecommendationRequested = { grams, _ in
             answer = { transport.sendBolusRecommendation(grams: grams, units: 0.45, maximumBolus: 5) }
         }
         receive(command: "recommend:10", from: transport.remoteTransport, on: transport)
