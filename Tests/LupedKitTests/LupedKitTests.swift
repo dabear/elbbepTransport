@@ -320,6 +320,8 @@ final class LupedWatchRequestTests: XCTestCase {
         XCTAssertNil(LupedWatchRequest(command: "refresh"))
         XCTAssertEqual(LupedWatchRequest(command: "mute:30"), .mute(minutes: 30))
         XCTAssertEqual(LupedWatchRequest(command: "mute:0"), .mute(minutes: nil))
+        XCTAssertEqual(LupedWatchRequest(command: "mute:cancel"), .mute(minutes: 0), "ends the mute")
+        XCTAssertEqual(LupedWatchRequest(command: "mute:-5"), .mute(minutes: nil))
         XCTAssertEqual(LupedWatchRequest(command: "mute:abc"), .mute(minutes: nil))
         XCTAssertEqual(LupedWatchRequest(command: "mute"), .mute(minutes: nil))
         XCTAssertEqual(LupedWatchRequest(command: "temptarget:Activity"), .tempTarget(.start("Activity")))

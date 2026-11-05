@@ -180,7 +180,8 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// host is not ready; throwing logs the error.
     public var snapshotProvider: (() async throws -> LupedSnapshot?)?
     /// Called when the watch asks to mute the host's alerts (`COMMAND`
-    /// `mute:<minutes>`), with the requested duration and when the user confirmed
+    /// `mute:<minutes>`), with the requested duration (0 for `mute:cancel`, to end
+    /// the mute) and when the user confirmed
     /// it (see `LupedCommandTiming`; `nil` when the command didn't say). The host
     /// decides whether its user allowed muting from the watch.
     public var alertMuteRequested: ((_ duration: TimeInterval, _ requestedAt: Date?) -> Void)?

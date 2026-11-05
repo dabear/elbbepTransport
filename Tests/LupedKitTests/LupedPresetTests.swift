@@ -2,8 +2,8 @@ import XCTest
 @testable import ElbbepTransport
 @testable import LupedKit
 
-/// Luped Remote gets the host's presets in `DATA` (indexes 16 and 17) to start
-/// one; the watchface never does.
+/// Luped Remote asks for the host's presets (`presets`, answered on `PRESETS`)
+/// to start or end one; `DATA` has none.
 final class LupedPresetTests: XCTestCase {
     private let readings = [LupedReading(date: Date(timeIntervalSince1970: 1_800_000_000), milligramsPerDeciliter: 120, trend: .flat)]
     private let overrides = [
@@ -114,5 +114,17 @@ final class LupedPresetTests: XCTestCase {
         let value = ArraySlice(Array(command.utf8) + [0])
         transport.pebbleTransport(transport.remoteTransport, didReceive: [LupedMessageKey.command: AppMessageTuple(type: PebbleAppMessage.tupleCString, value: value)], message: Array(repeating: 0, count: 20))
         XCTAssertEqual(started, [.start("odd:id@1")])
+    }
+
+    /// `mute:cancel` reaches the host as a mute of 0 minutes, which ends it.
+    @MainActor
+    func testEndingTheMute() async throws {
+        let transport = await remoteRunning(overrides: nil, tempTargets: nil)
+        var durations: [TimeInterval] = []
+        transport.alertMuteRequested = { duration, _ in durations.append(duration) }
+        receive("mute:60@\(Int(Date().timeIntervalSince1970))", on: transport)
+        receive("mute:cancel@\(Int(Date().timeIntervalSince1970))", on: transport)
+        XCTAssertEqual(durations, [3600, 0])
+        XCTAssertTrue(transport.communicationLog.entries.contains { $0.message.hasPrefix("Watch asked to end the mute of Host alerts") })
     }
 }

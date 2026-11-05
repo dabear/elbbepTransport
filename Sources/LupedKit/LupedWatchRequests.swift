@@ -30,13 +30,15 @@ public enum LupedCarbAbsorption: String, Equatable, Sendable, CaseIterable {
 }
 
 /// An unsigned request from the watch, `nil` inside when its argument is
-/// missing or invalid: `mute:<minutes>` (above zero), `carbs:<grams>[:<absorption>]` (above
+/// missing or invalid: `mute:<minutes>` (above zero) or `mute:cancel` (0: end the
+/// mute), `carbs:<grams>[:<absorption>]` (above
 /// zero), `override:<preset name or id>` or `override:cancel`, and
 /// `temptarget:<preset name or id>` or `temptarget:cancel`, and
 /// `recommend:<grams>[:<absorption>]` (zero or more: the carbs the user is about to add), which
 /// asks what bolus the host would recommend and changes nothing. Boluses are
 /// only ever signed (`LupedSignedBolus`).
 enum LupedWatchRequest: Equatable {
+    /// 0 minutes ends the host's mute (`mute:cancel`).
     case mute(minutes: Int?)
     case carbs(Double?, absorption: LupedCarbAbsorption? = nil)
     case override(LupedPresetAction?)
@@ -51,7 +53,7 @@ enum LupedWatchRequest: Equatable {
         let preset = argument.flatMap { $0 == "cancel" ? LupedPresetAction.cancel : $0.isEmpty ? nil : .start($0) }
         switch parts.first {
         case "mute":
-            self = .mute(minutes: argument.flatMap { Int($0) }.flatMap { $0 > 0 ? $0 : nil })
+            self = .mute(minutes: argument == "cancel" ? 0 : argument.flatMap { Int($0) }.flatMap { $0 > 0 ? $0 : nil })
         case "carbs":
             let (grams, absorption) = Self.grams(argument, allowingZero: false)
             self = .carbs(grams, absorption: absorption)

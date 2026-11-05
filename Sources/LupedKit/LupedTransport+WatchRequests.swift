@@ -9,7 +9,8 @@ extension LupedTransport {
         let confirmed = requestedAt.map { String(format: ", confirmed %.0f s ago", Date().timeIntervalSince($0)) } ?? ", without the watch's timing"
         switch request {
         case .mute(let minutes?):
-            record(.fromWatch, "Watch asked to mute \(hostName) alerts for \(minutes) min\(confirmed) (COMMAND \(command))")
+            let asked = minutes == 0 ? "end the mute of \(hostName) alerts" : "mute \(hostName) alerts for \(minutes) min"
+            record(.fromWatch, "Watch asked to \(asked)\(confirmed) (COMMAND \(command))")
             alertMuteRequested?(TimeInterval(minutes * 60), requestedAt)
         case .carbs(let grams?, let absorption):
             record(.fromWatch, String(format: "Watch asked to add %g g of %@carbs%@ (COMMAND %@)", grams, absorption.map { "\($0.rawValue) " } ?? "", confirmed, command))
