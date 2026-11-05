@@ -78,7 +78,7 @@ final class LupedBolusRecommendationTests: XCTestCase {
 
     /// Both sessions open and Luped Remote running, its reading acknowledged.
     private func remoteRunning() async throws -> LupedTransport {
-        let transport = LupedTransport(hostName: "Host", settings: LupedSettings(isEnabled: true))
+        let transport = LupedTransport(hostName: "Host", settings: LupedSettings(isEnabled: true, remoteEnabled: true))
         let readingDate = Date()
         transport.snapshotProvider = {
             LupedSnapshot(readings: [LupedReading(date: readingDate, milligramsPerDeciliter: 120, trend: .flat)], storedSampleCount: 1, unit: .milligramsPerDeciliter)
@@ -92,6 +92,7 @@ final class LupedBolusRecommendationTests: XCTestCase {
         receive(tuples: [PebbleAppMessage.alloyReadyKey: AppMessageTuple(type: PebbleAppMessage.tupleUnsigned, value: [1])], from: transport.remoteTransport, on: transport)
         transport.pebbleTransport(transport.remoteTransport, didReceiveReply: true, transactionID: 0, message: [])
         XCTAssertEqual(transport.foreground, .remote)
+        XCTAssertNotNil(transport.status.remoteLastSeen, "Luped Remote's message shows it is installed")
         return transport
     }
 

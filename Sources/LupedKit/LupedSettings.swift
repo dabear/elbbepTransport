@@ -42,6 +42,7 @@ public struct LupedSettings: Equatable {
     public var loopRing: Bool
     /// Luped Remote gets its own watch session next to the watchface's. Its
     /// requests are the watchface's, so the host's own switches decide them.
+    /// Off by default: Luped Remote is a separate watchapp the user installs.
     public var remoteEnabled: Bool
     /// The remote's app UUID, like `watchfaceUUID` for a build of its own.
     public var remoteUUID: UUID
@@ -53,7 +54,7 @@ public struct LupedSettings: Equatable {
         fullScreen: Bool = false,
         statusLine: LupedStatusLine = .iobAndCob,
         loopRing: Bool = true,
-        remoteEnabled: Bool = true,
+        remoteEnabled: Bool = false,
         remoteUUID: UUID = LupedSettings.defaultRemoteUUID
     ) {
         self.isEnabled = isEnabled

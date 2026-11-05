@@ -9,7 +9,7 @@ import XCTest
 @MainActor
 final class LupedCommandTimeoutTests: XCTestCase {
     func testStaleTimeoutFromPreviousAppClearsTheNewAppsCommand() async throws {
-        let transport = LupedTransport(hostName: "Host", settings: LupedSettings(isEnabled: true))
+        let transport = LupedTransport(hostName: "Host", settings: LupedSettings(isEnabled: true, remoteEnabled: true))
         let readingDate = Date()
         transport.snapshotProvider = {
             LupedSnapshot(readings: [LupedReading(date: readingDate, milligramsPerDeciliter: 120, trend: .flat)], storedSampleCount: 1, unit: .milligramsPerDeciliter)

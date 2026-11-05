@@ -136,12 +136,16 @@ its own.
 
 LupedKit also serves Luped Remote (`LupedSettings.remoteUUID`, by default `defaultRemoteUUID`), a watchapp that
 shows the same reading and sends the watchface's requests from its buttons. It
-gets a session of its own while `remoteEnabled` is on (the default). The watch
+gets a session of its own while `remoteEnabled` is on (off by default: it is a
+separate watchapp the user installs). The watch
 runs one of the two at a time, so LupedKit sends to the app that last started
 or sent something (`foreground`), and to the other one after the first rejects a
 push. Both apps' requests reach the same callbacks; each app run gets its own
 bolus key; a `RESULT` goes to whichever app is running when it is sent, so the
 watchface shows the answer to a request the remote sent before it closed.
+`status.remoteLastSeen` is when Luped Remote last sent something (it does when
+it starts): its session opens whether or not it is installed, so only this says
+it is.
 The remote always gets IOB, COB and the loop's status, whatever the watchface
 shows, and no graph history. `status.remoteLink` and `status.foreground` show the remote's session and where
 messages go; watch diagnostics come from the watchface only.

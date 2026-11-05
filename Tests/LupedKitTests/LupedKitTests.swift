@@ -211,7 +211,7 @@ final class LupedSettingsTests: XCTestCase {
     // Luped Remote always shows IOB, COB and the loop, so the host supplies them
     // even when the watchface's display leaves them out.
     func testTheRemoteGetsLoopStatusWhateverTheWatchfaceShows() throws {
-        let watchface = LupedSettings(fullScreen: true)
+        let watchface = LupedSettings(fullScreen: true, remoteEnabled: true)
         XCTAssertFalse(watchface.needsLoopStatus)
         XCTAssertTrue(watchface.hostNeedsLoopStatus)
         XCTAssertFalse(LupedSettings(fullScreen: true, remoteEnabled: false).hostNeedsLoopStatus)
@@ -230,16 +230,18 @@ final class LupedSettingsTests: XCTestCase {
         let uuid = UUID()
         XCTAssertEqual(LupedSettings(rawValue: LupedSettings(remoteUUID: uuid).rawValue).remoteUUID, uuid)
         XCTAssertEqual(LupedSettings(rawValue: ["lupedPebbleRemoteUUID": "nope"]).remoteUUID, LupedSettings.defaultRemoteUUID)
-        XCTAssertTrue(LupedSettings(isEnabled: true).servesRemote)
+        XCTAssertTrue(LupedSettings(isEnabled: true, remoteEnabled: true).servesRemote)
+        XCTAssertFalse(LupedSettings(isEnabled: true).servesRemote, "Off by default")
         XCTAssertFalse(LupedSettings(isEnabled: true, remoteUUID: LupedSettings.defaultWatchfaceUUID).servesRemote)
         XCTAssertFalse(LupedSettings(isEnabled: true, remoteEnabled: false).servesRemote)
         XCTAssertFalse(LupedSettings(isEnabled: false).servesRemote)
     }
 
-    // Luped Remote is served by default; turning it off is kept.
+    // Luped Remote is off by default; turning it on (or off) is kept.
     func testRemoteSettingRoundTrips() {
-        XCTAssertTrue(LupedSettings().remoteEnabled)
-        XCTAssertTrue(LupedSettings(rawValue: [:]).remoteEnabled)
+        XCTAssertFalse(LupedSettings().remoteEnabled)
+        XCTAssertFalse(LupedSettings(rawValue: [:]).remoteEnabled)
+        XCTAssertTrue(LupedSettings(rawValue: LupedSettings(remoteEnabled: true).rawValue).remoteEnabled)
         XCTAssertFalse(LupedSettings(rawValue: LupedSettings(remoteEnabled: false).rawValue).remoteEnabled)
     }
 }

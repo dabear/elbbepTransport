@@ -599,6 +599,9 @@ public final class LupedTransport: PebbleTransportDelegate {
         // Only the running app sends anything.
         rejectedApps.removeAll()
         let sender = app(of: source)
+        if sender == .remote {
+            status.remoteLastSeen = Date()
+        }
         let started = tuples[PebbleAppMessage.alloyReadyKey] != nil
         let switched = sender != foreground
         if switched {
@@ -1052,6 +1055,9 @@ public final class LupedLinkStatus: ObservableObject {
     @Published public var remoteLink = Link.off
     /// The app the phone sends to.
     @Published public var foreground = LupedWatchApp.watchface
+    /// When Luped Remote last sent something (it does when it starts), so the
+    /// phone knows it is installed: its session alone opens without it.
+    @Published public var remoteLastSeen: Date?
     @Published public var lastDelivery: Delivery?
     @Published public var lastRejectedAt: Date?
     @Published public var retryAt: Date?
