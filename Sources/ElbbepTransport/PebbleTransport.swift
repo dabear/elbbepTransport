@@ -430,7 +430,8 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
 
     // MARK: - PPoGATT
 
-    private func handlePacket(_ packet: [UInt8]) {
+    /// Internal for tests, which open a session with a reset request and complete.
+    func handlePacket(_ packet: [UInt8]) {
         let type = packet[0] & 0b111
         let sequence = packet[0] >> 3
 

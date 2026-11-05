@@ -138,8 +138,9 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// The host app's name, such as "Loop" or "Trio": in log lines, and sent as
     /// `DATA` index 15 so a watch can tell two apps on the same phone apart.
     public let hostName: String
-    private let watchfaceTransport: PebbleTransport
-    private let remoteTransport: PebbleTransport
+    // Internal for tests, which open sessions through `handlePacket`.
+    let watchfaceTransport: PebbleTransport
+    let remoteTransport: PebbleTransport
     /// The app messages go to; see the type's documentation.
     public private(set) var foreground = LupedWatchApp.watchface {
         didSet { status.foreground = foreground }
@@ -253,6 +254,9 @@ public final class LupedTransport: PebbleTransportDelegate {
     var pendingBolusKey: String?
     private var diagnosticsReplyTimeout: Task<Void, Never>?
     private var pushAckTimeout: Task<Void, Never>?
+    /// The reply timeout of `inflightCommand`. Each app's session numbers its own
+    /// messages, so a timeout outliving its command could match the next app's.
+    private var commandAckTimeout: Task<Void, Never>?
     private var retryDelay: TimeInterval = 0
     /// Set after the full retry backoff got no ACK: pushes stop until the
     /// watchface makes contact, a new session opens, or the user sends.
@@ -812,6 +816,8 @@ public final class LupedTransport: PebbleTransportDelegate {
                 pendingResults.insert(result, at: 0)
             }
             inflightCommand = nil
+            commandAckTimeout?.cancel()
+            commandAckTimeout = nil
         }
     }
 
@@ -861,9 +867,10 @@ public final class LupedTransport: PebbleTransportDelegate {
             transport.push(transactionID: transactionID, tuples: [(LupedMessageKey.result, .cString(result))])
         }
 
-        Task { [weak self] in
+        commandAckTimeout?.cancel()
+        commandAckTimeout = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(PebbleAppMessage.ackTimeout * 1_000_000_000))
-            guard let self, let pending = self.inflightCommand, pending.transactionID == transactionID else { return }
+            guard !Task.isCancelled, let self, let pending = self.inflightCommand, pending.transactionID == transactionID else { return }
             self.record(.error, "#\(transactionID) no reply within \(Int(PebbleAppMessage.ackTimeout)) s")
             self.noteUndelivered(pending.command, "no reply")
             self.inflightCommand = nil
