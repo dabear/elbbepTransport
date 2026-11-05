@@ -152,6 +152,14 @@ and with a `LupedResultReason` says why it wasn't done as a third field
 are unaffected; Luped Remote 0.1.1 shows the reason. An `ok` answer never gets
 one.
 
+`bolusRecommendationRequested` is called when Luped Remote asks what bolus the
+host would recommend with the carbs the user is about to add
+(`COMMAND recommend:<grams>`, 0 for none), before a bolus is picked; nothing is
+to be added or delivered. Answer with `sendBolusRecommendation(grams:units:maximumBolus:)`
+or `sendBolusRecommendationRefusal(grams:outcome:reason:)`; the answer goes on
+the `RECOMMEND` key (10006) to Luped Remote only, and is dropped once it has
+closed. Without a handler the request is answered `ignored`.
+
 The Luped watchface, Luped Remote and their `DATA` protocol live in
 [LupedPebbleWatchFace](https://github.com/dabear/LupedPebbleWatchFace)
 (`variants/luped/PROTOCOL.md`).

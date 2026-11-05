@@ -9,6 +9,8 @@ enum LupedMessageKey {
     static let configured: UInt32 = 10_003
     static let diagnostics: UInt32 = 10_004
     static let result: UInt32 = 10_005
+    /// The answer to `COMMAND recommend:<grams>`, to Luped Remote only.
+    static let recommendation: UInt32 = 10_006
 }
 
 /// Luped's delivery policy for readings.
@@ -203,6 +205,12 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// `signedbolus:<outcome>` or `signedforcedbolus:<outcome>`), so a resent
     /// request gets the same answer.
     public var bolusRequested: ((_ units: Double, _ forced: Bool, _ grams: Double?, _ requestedAt: Date) -> Void)?
+    /// Called when Luped Remote asks what bolus the host would recommend with the
+    /// carbs the user is about to add (`COMMAND recommend:<grams>`, 0 for none),
+    /// before the user picks one. Nothing is to be added or delivered. Answer with
+    /// `sendBolusRecommendation` or `sendBolusRecommendationRefusal`; without it,
+    /// the request is answered `ignored`.
+    public var bolusRecommendationRequested: ((_ grams: Double) -> Void)?
     /// Whether to hand the watch a bolus session key. Off unless the host may
     /// take boluses from this watch; turning it off forgets the key.
     public var issuesBolusKey = false {
@@ -249,6 +257,8 @@ public final class LupedTransport: PebbleTransportDelegate {
     private var diagnosticsRequested = false
     /// Outcomes of the watch's requests waiting to go back to it (`RESULT`), oldest first.
     private var pendingResults: [String] = []
+    /// The answer to Luped Remote's recommendation request (`RECOMMEND`), until sent.
+    private var pendingRecommendation: String?
     var bolusAuth = LupedBolusAuth()
     /// The `COMMAND auth:…` handing the watch its bolus session key, until sent.
     var pendingBolusKey: String?
@@ -300,6 +310,8 @@ public final class LupedTransport: PebbleTransportDelegate {
             latestPayload = payload(from: latestSnapshot, for: app)
         }
         deliveredPayload = nil
+        // A recommendation answers the app that asked, which has closed.
+        pendingRecommendation = nil
         pushRetry?.cancel()
         pushRetry = nil
         retryDelay = 0
@@ -579,6 +591,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         paused = false
         status.retryAt = nil
         inflightCommand = nil
+        pendingRecommendation = nil
         endBolusSession()
     }
 
@@ -833,6 +846,37 @@ public final class LupedTransport: PebbleTransportDelegate {
         queueResult(result)
     }
 
+    /// Answers Luped Remote's recommendation request: the units the host
+    /// recommends with `grams` of carbs, and its maximum bolus
+    /// (`<grams>:ok:<units>:<maximum bolus>`, the maximum empty when unknown).
+    public func sendBolusRecommendation(grams: Double, units: Double, maximumBolus: Double?) {
+        queueRecommendation("\(Self.number(grams)):ok:\(Self.number(units)):\(maximumBolus.map(Self.number) ?? "")")
+    }
+
+    /// Answers Luped Remote's recommendation request without one:
+    /// `<grams>:<outcome>[:<reason>]`, with the outcomes and reasons of `RESULT`.
+    public func sendBolusRecommendationRefusal(grams: Double, outcome: String = "refused", reason: LupedResultReason?) {
+        queueRecommendation("\(Self.number(grams)):\(outcome)\(reason.map { ":\($0.rawValue)" } ?? "")")
+    }
+
+    func queueRecommendation(_ value: String) {
+        // Only Luped Remote asks; once it has closed, nobody waits for the answer.
+        guard foreground == .remote else {
+            record(.info, "RECOMMEND \(value) not sent: Luped Remote is no longer running")
+            return
+        }
+        pendingRecommendation = value
+        sendIfNeeded()
+    }
+
+    /// A number for the watch: at most three decimals, without trailing zeros.
+    nonisolated static func number(_ value: Double) -> String {
+        var text = String(format: "%.3f", value)
+        while text.hasSuffix("0") { text.removeLast() }
+        if text.hasSuffix(".") { text.removeLast() }
+        return text == "-0" ? "0" : text
+    }
+
     func queueResult(_ result: String) {
         pendingResults.append(result)
         if pendingResults.count > 5 {
@@ -844,7 +888,7 @@ public final class LupedTransport: PebbleTransportDelegate {
     }
 
     private func sendPendingCommand() {
-        guard pendingBolusKey != nil || diagnosticsRequested || !pendingResults.isEmpty, inflightPush == nil, inflightCommand == nil, transport.isSessionOpen else {
+        guard pendingBolusKey != nil || pendingRecommendation != nil || diagnosticsRequested || !pendingResults.isEmpty, inflightPush == nil, inflightCommand == nil, transport.isSessionOpen else {
             return
         }
         let transactionID = transport.makeTransactionID()
@@ -855,6 +899,11 @@ public final class LupedTransport: PebbleTransportDelegate {
             inflightCommand = (transactionID, label)
             record(.toWatch, "#\(transactionID) \(label)")
             transport.push(transactionID: transactionID, tuples: [(LupedMessageKey.command, .cString(key))])
+        } else if let value = pendingRecommendation {
+            pendingRecommendation = nil
+            inflightCommand = (transactionID, "RECOMMEND \(value)")
+            record(.toWatch, "#\(transactionID) RECOMMEND \(value)")
+            transport.push(transactionID: transactionID, tuples: [(LupedMessageKey.recommendation, .cString(value))])
         } else if diagnosticsRequested {
             diagnosticsRequested = false
             inflightCommand = (transactionID, "COMMAND diagnostics")

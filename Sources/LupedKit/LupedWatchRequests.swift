@@ -24,13 +24,16 @@ public struct LupedCommandTiming: Equatable {
 /// An unsigned request from the watch, `nil` inside when its argument is
 /// missing or invalid: `mute:<minutes>` (above zero), `carbs:<grams>` (above
 /// zero), `override:<preset name or id>` or `override:cancel`, and
-/// `temptarget:<preset name or id>` or `temptarget:cancel`. Boluses are only
-/// ever signed (`LupedSignedBolus`).
+/// `temptarget:<preset name or id>` or `temptarget:cancel`, and
+/// `recommend:<grams>` (zero or more: the carbs the user is about to add), which
+/// asks what bolus the host would recommend and changes nothing. Boluses are
+/// only ever signed (`LupedSignedBolus`).
 enum LupedWatchRequest: Equatable {
     case mute(minutes: Int?)
     case carbs(Double?)
     case override(LupedPresetAction?)
     case tempTarget(LupedPresetAction?)
+    case recommend(grams: Double?)
 
     init?(command: String) {
         let parts = command.split(separator: ":", maxSplits: 1).map(String.init)
@@ -45,6 +48,8 @@ enum LupedWatchRequest: Equatable {
             self = .override(preset)
         case "temptarget":
             self = .tempTarget(preset)
+        case "recommend":
+            self = .recommend(grams: argument.flatMap(Double.init).flatMap { $0.isFinite && $0 >= 0 ? $0 : nil })
         default:
             return nil
         }
@@ -57,6 +62,7 @@ enum LupedWatchRequest: Equatable {
         case .carbs: "carbs"
         case .override: "override"
         case .tempTarget: "temptarget"
+        case .recommend: "recommend"
         }
     }
 }
