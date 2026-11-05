@@ -176,6 +176,10 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// host can keep the latest across launches and hand it to `restoreDiagnostics`.
     /// The watchface reports about once an hour on its own.
     public var diagnosticsDidArrive: ((String, Date) -> Void)?
+    /// Called when a Luped app reports a speaker (`COMMAND speaker:on|quiet`),
+    /// with whether the watch's Quiet Time is on, so the host keeps
+    /// `LupedSettings.watchHasSpeaker` and offers the alarm sound.
+    public var speakerDidReport: ((Bool) -> Void)?
     /// Supplies the current readings and alert state. Returns `nil` while the
     /// host is not ready; throwing logs the error.
     public var snapshotProvider: (() async throws -> LupedSnapshot?)?
@@ -227,7 +231,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         }
     }
 
-    private var latestPayload: LupedPayload?
+    private(set) var latestPayload: LupedPayload?
     /// The host's snapshot `latestPayload` was built from, to rebuild it for the other app.
     /// Internal for preset requests, which map a watch id back to the host's.
     private(set) var latestSnapshot: LupedSnapshot?
@@ -259,6 +263,8 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// A COMMAND push awaiting the watch's ACK; pushes are sent one at a time.
     private var inflightCommand: (transactionID: UInt8, command: String)?
     private var diagnosticsRequested = false
+    /// Whether the current alert event is sounded (`LupedPayload`'s `alertSound`).
+    private var alertSoundDecision: (event: Int, sounded: Bool)?
     /// Find my Pebble (`COMMAND findpebble:<seconds>`), until sent, and the one
     /// in flight, which goes to the other app if this one rejects it.
     private var pendingFind: LupedFindRequest?
@@ -401,7 +407,15 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// Luped Remote always gets IOB, COB and loop status, and no history.
     private func payload(from snapshot: LupedSnapshot, for app: LupedWatchApp) -> LupedPayload? {
         let shown = app == .remote ? settings.remote : settings
-        return LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: shown.fullScreen, hostAlertState: snapshot.hostAlertState, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, loopStatus: shown.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(shown.shownStatusLine, therapy: snapshot.therapy, unit: snapshot.unit), hostName: hostName, settings: shown, remote: app == .remote)
+        // Whether an alert sounds is decided when it first goes out with a
+        // level above 0, and kept, so a settings change doesn't buzz it again.
+        // A snapshot with the new event before its level decides nothing.
+        if alertSoundDecision?.event != snapshot.alertEvent {
+            alertSoundDecision = snapshot.hostAlertState > 0
+                ? (snapshot.alertEvent, settings.soundsAlarm(hostAlertState: snapshot.hostAlertState))
+                : nil
+        }
+        return LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: shown.fullScreen, hostAlertState: snapshot.hostAlertState, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, alertSound: alertSoundDecision?.sounded, loopStatus: shown.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(shown.shownStatusLine, therapy: snapshot.therapy, unit: snapshot.unit), hostName: hostName, settings: shown, remote: app == .remote)
     }
 
     /// Sends now, or after a short wait so a reading and the loop result that
@@ -663,6 +677,10 @@ public final class LupedTransport: PebbleTransportDelegate {
             } else {
                 sendIfNeeded(force: true)
             }
+        } else if let command, let quietTime = LupedWatchSpeaker.quietTime(reportedIn: command) {
+            record(.fromWatch, "\(sender.logLabel) has a speaker for the alarm sound" + (quietTime ? "; the watch's Quiet Time is on, which can mute it" : "") + " (COMMAND \(command))")
+            status.speaker = LupedWatchSpeaker(quietTime: quietTime, reportedAt: Date())
+            speakerDidReport?(quietTime)
         } else if let command {
             // An action LupedKit doesn't know (`bolus:` is gone) or a malformed
             // one: nothing is passed to the host.
@@ -1160,6 +1178,24 @@ public final class LupedLinkStatus: ObservableObject {
     @Published public var watchInfoNote: String?
     /// Where the last Find my Pebble request went, or why it didn't.
     @Published public var findNote: String?
+    /// The watch's last speaker report, if a Luped app on it has a speaker.
+    @Published public var speaker: LupedWatchSpeaker?
+}
+
+/// A watch's `COMMAND speaker:on` or `speaker:quiet`: it has a speaker for the
+/// alarm sound, and whether its Quiet Time (which can mute it) is on.
+public struct LupedWatchSpeaker: Equatable {
+    public var quietTime: Bool
+    public var reportedAt: Date
+
+    /// Whether Quiet Time is on, or nil when `command` isn't a speaker report.
+    static func quietTime(reportedIn command: String) -> Bool? {
+        switch command {
+        case "speaker:on": false
+        case "speaker:quiet": true
+        default: nil
+        }
+    }
 }
 
 /// A Find my Pebble request: how long the watch looks for attention, and when

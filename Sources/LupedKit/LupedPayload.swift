@@ -100,11 +100,13 @@ public struct LupedPayload: Equatable {
 
     /// `alertEvent` changes each time the host fires a glucose alert (the first
     /// fire and every repeat), so the watch can buzz on a repeat even though the
-    /// alert level stays the same.
+    /// alert level stays the same. It goes negative when the watch should sound
+    /// the alarm too (`LupedSettings.soundsAlarm`, or `alertSound` when given);
+    /// older watches only compare it.
     /// `settings` lets the log decode say why a loop status or status line field is
     /// `null`: the user's Layout, Status Line and Last Loop choices, or a value the host
     /// didn't provide. `remote` leaves the history out: Luped Remote draws no graph.
-    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil, hostName: String? = nil, settings: LupedSettings = LupedSettings(), remote: Bool = false) {
+    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, alertSound: Bool? = nil, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil, hostName: String? = nil, settings: LupedSettings = LupedSettings(), remote: Bool = false) {
         let readings = Self.graphReadings(readings, limit: 12)
         guard let latest = readings.last else {
             return nil
@@ -121,6 +123,10 @@ public struct LupedPayload: Equatable {
         // Graph sends a new DATA right away, which brings the history back.
         let history = fullScreen || remote ? [] : values
         let unitName = unit == .millimolesPerLiter ? "mmol/L" : "mg/dL"
+        // `alertSound` keeps an alert's first decision, so a settings change
+        // while it is active doesn't change its event (and buzz it again).
+        let sounded = alertEvent != 0 && (alertSound ?? settings.soundsAlarm(hostAlertState: hostAlertState))
+        let alertEvent = sounded ? -abs(alertEvent) : alertEvent
 
         // Each DATA field paired with the description shown under the summary in the
         // communication log, so the wire format and its decode share one definition
@@ -136,7 +142,7 @@ public struct LupedPayload: Equatable {
             (timestamp, "timestamp (milliseconds since Unix epoch)"),
             (fullScreen ? 1 : 0, fullScreen ? "layout: Large Glucose" : "layout: Graph"),
             (hostAlertState, "host alert: \(Self.alertStateName(hostAlertState))" + (hostAlertReason.map { " (\($0))" } ?? "")),
-            (alertEvent, "alert event (changes each time the host fires an alert)"),
+            (alertEvent, sounded ? "alert event, negative: sound the alarm too" : "alert event (changes each time the host fires an alert)"),
             // Loop status for the watch's IOB/COB and loop ring; null when not sent.
             (loopStatus?.insulinOnBoard.map { Self.rounded($0, scale: 1) } ?? NSNull(), loopStatus?.insulinOnBoard != nil ? "insulin on board (U)" : "insulin on board" + Self.notSent(insulinAndCarbs: true, settings: settings)),
             (loopStatus?.carbsOnBoard.map { Self.rounded($0, scale: 0) } ?? NSNull(), loopStatus?.carbsOnBoard != nil ? "carbs on board (g)" : "carbs on board" + Self.notSent(insulinAndCarbs: true, settings: settings)),

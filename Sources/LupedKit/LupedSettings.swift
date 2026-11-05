@@ -18,6 +18,8 @@ public struct LupedSettings: Equatable {
         static let loopRing = "lupedPebbleLoopRing"
         static let remoteEnabled = "lupedPebbleRemoteEnabled"
         static let remoteUUID = "lupedPebbleRemoteUUID"
+        static let alarmSound = "lupedPebbleAlarmSound"
+        static let watchHasSpeaker = "lupedPebbleWatchHasSpeaker"
     }
 
     public static let defaultWatchfaceUUID = UUID(uuidString: "bf32924c-4839-449e-9e56-ee190249acb2")!
@@ -46,6 +48,12 @@ public struct LupedSettings: Equatable {
     public var remoteEnabled: Bool
     /// The remote's app UUID, like `watchfaceUUID` for a build of its own.
     public var remoteUUID: UUID
+    /// Which glucose alarms the watch also sounds, on watches with a speaker.
+    /// Off by default.
+    public var alarmSound: LupedAlarmSound
+    /// Whether a Luped app on this watch reported a speaker (`COMMAND
+    /// speaker:on|quiet`): the alarm sound is offered, and sent, only then.
+    public var watchHasSpeaker: Bool
 
     public init(
         isEnabled: Bool = false,
@@ -55,7 +63,9 @@ public struct LupedSettings: Equatable {
         statusLine: LupedStatusLine = .iobAndCob,
         loopRing: Bool = true,
         remoteEnabled: Bool = false,
-        remoteUUID: UUID = LupedSettings.defaultRemoteUUID
+        remoteUUID: UUID = LupedSettings.defaultRemoteUUID,
+        alarmSound: LupedAlarmSound = .off,
+        watchHasSpeaker: Bool = false
     ) {
         self.isEnabled = isEnabled
         self.watchfaceUUID = watchfaceUUID
@@ -65,6 +75,19 @@ public struct LupedSettings: Equatable {
         self.loopRing = loopRing
         self.remoteEnabled = remoteEnabled
         self.remoteUUID = remoteUUID
+        self.alarmSound = alarmSound
+        self.watchHasSpeaker = watchHasSpeaker
+    }
+
+    /// Whether the watch should also sound an alarm at `hostAlertState` (`DATA`
+    /// 8): Watch Alarms on, a speaker reported, and the user's choice covers it.
+    public func soundsAlarm(hostAlertState: Int) -> Bool {
+        guard alarmsEnabled, watchHasSpeaker, hostAlertState > 0 else { return false }
+        switch alarmSound {
+        case .off: return false
+        case .urgentLow: return hostAlertState == 2
+        case .all: return true
+        }
     }
 
     /// Whether Luped Remote gets a watch session: it's on, and its UUID isn't
@@ -125,7 +148,9 @@ public struct LupedSettings: Equatable {
             statusLine: (rawValue[Key.statusLine] as? String).flatMap(LupedStatusLine.init(rawValue:)) ?? defaults.statusLine,
             loopRing: rawValue[Key.loopRing] as? Bool ?? defaults.loopRing,
             remoteEnabled: rawValue[Key.remoteEnabled] as? Bool ?? defaults.remoteEnabled,
-            remoteUUID: (rawValue[Key.remoteUUID] as? String).flatMap(UUID.init(uuidString:)) ?? defaults.remoteUUID
+            remoteUUID: (rawValue[Key.remoteUUID] as? String).flatMap(UUID.init(uuidString:)) ?? defaults.remoteUUID,
+            alarmSound: (rawValue[Key.alarmSound] as? String).flatMap(LupedAlarmSound.init(rawValue:)) ?? defaults.alarmSound,
+            watchHasSpeaker: rawValue[Key.watchHasSpeaker] as? Bool ?? defaults.watchHasSpeaker
         )
     }
 
@@ -139,8 +164,19 @@ public struct LupedSettings: Equatable {
             Key.loopRing: loopRing,
             Key.remoteEnabled: remoteEnabled,
             Key.remoteUUID: remoteUUID.uuidString.lowercased(),
+            Key.alarmSound: alarmSound.rawValue,
+            Key.watchHasSpeaker: watchHasSpeaker,
         ]
     }
+}
+
+/// Which glucose alarms a watch with a speaker sounds as well as buzzes. The
+/// watch plays the sound at its own speaker volume, never without the buzz; its
+/// Quiet Time can mute it.
+public enum LupedAlarmSound: String, CaseIterable, Equatable {
+    case off
+    case urgentLow
+    case all
 }
 
 /// What the left of the watch's status strip shows: nothing, IOB and COB (the
