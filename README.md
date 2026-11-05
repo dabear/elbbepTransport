@@ -162,6 +162,16 @@ signed bolus (whose signature then covers it); `carbsRequested`,
 `bolusRequested` and `bolusRecommendationRequested` pass it on, `nil` when the
 watch didn't say.
 
+Luped Remote asks for the host's presets with `COMMAND presets`; LupedKit
+answers on the `PRESETS` key (10007, to Luped Remote only) from the latest
+snapshot (`LupedSnapshot.overridePresets` and `tempTargetPresets`):
+`[overrides, temp targets]`, each `[[id, name, running], …]` or `null` for a kind
+the host doesn't have (Loop: temp targets). `DATA` carries no presets. At most 16
+per kind; names are cleaned for the watch fonts (no control or invisible
+characters, emoji or symbols, at most 32 characters) and only shown; ids go back
+unchanged in `override:<id>` / `temptarget:<id>`, or as a `~` token (12 hex digits
+of SHA-256) when they aren't plain, which LupedKit maps back to the host's id.
+
 `bolusRecommendationRequested` is called when Luped Remote asks what bolus the
 host would recommend with the carbs the user is about to add
 (`COMMAND recommend:<grams>`, 0 for none), before a bolus is picked; nothing is

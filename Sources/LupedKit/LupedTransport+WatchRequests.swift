@@ -26,6 +26,9 @@ extension LupedTransport {
                 return
             }
             bolusRecommendationRequested(grams, absorption)
+        case .presets:
+            record(.fromWatch, "Luped Remote asked for \(hostName)'s presets (COMMAND \(command))")
+            sendPresets()
         case .recommend(nil, _):
             // Answered as RECOMMEND, not RESULT: only Luped Remote asks, and waits for it.
             record(.error, "Watch asked for a bolus recommendation without valid carbs (COMMAND \(command))")
@@ -37,7 +40,7 @@ extension LupedTransport {
     }
 
     private func handlePresetRequest(
-        _ action: LupedPresetAction,
+        _ watchAction: LupedPresetAction,
         kind: String,
         callback: ((LupedPresetAction, Date?) -> Void)?,
         request: LupedWatchRequest,
@@ -45,6 +48,17 @@ extension LupedTransport {
         requestedAt: Date?,
         command: String
     ) {
+        // A preset id the watch couldn't carry as is came as a token
+        // (LupedPreset.watchID): map it back to the host's id.
+        var action = watchAction
+        if case .start(let id) = watchAction, id.hasPrefix(LupedPreset.tokenPrefix) {
+            let presets = (request.action == "override" ? latestSnapshot?.overridePresets : latestSnapshot?.tempTargetPresets) ?? []
+            if let preset = presets.first(where: { $0.watchID == id }) {
+                action = .start(preset.id)
+            } else {
+                record(.error, "Watch asked for \(kind) \(id), which matches none of the host's current \(kind)s")
+            }
+        }
         let asked = switch action {
         case .start(let preset): "start the \(kind) \"\(preset)\""
         case .cancel: "end the running \(kind)"

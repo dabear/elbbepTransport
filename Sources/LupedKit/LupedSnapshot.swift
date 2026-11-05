@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// The glucose and alert state a host app supplies for the next Luped payload.
@@ -26,8 +27,14 @@ public struct LupedSnapshot {
     /// The host's therapy values for a phone-formatted status line; `nil`
     /// when the host doesn't provide them.
     public var therapy: LupedTherapy?
+    /// The host's override presets, for Luped Remote to start one; `nil` when
+    /// the host sends none.
+    public var overridePresets: [LupedPreset]?
+    /// The host's temp target presets; `nil` for hosts without temp targets
+    /// (Loop), so Luped Remote offers none.
+    public var tempTargetPresets: [LupedPreset]?
 
-    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, therapy: LupedTherapy? = nil) {
+    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, therapy: LupedTherapy? = nil, overridePresets: [LupedPreset]? = nil, tempTargetPresets: [LupedPreset]? = nil) {
         self.readings = readings
         self.storedSampleCount = storedSampleCount
         self.unit = unit
@@ -36,6 +43,80 @@ public struct LupedSnapshot {
         self.alertEvent = alertEvent
         self.loopStatus = loopStatus
         self.therapy = therapy
+        self.overridePresets = overridePresets
+        self.tempTargetPresets = tempTargetPresets
+    }
+}
+
+/// A preset the watch can start: the host's identifier, which the watch sends
+/// back (`override:<id>`), its name, and whether it is running now.
+public struct LupedPreset: Equatable, Sendable {
+    public var id: String
+    public var name: String
+    public var isActive: Bool
+
+    public init(id: String, name: String, isActive: Bool) {
+        self.id = id
+        self.name = name
+        self.isActive = isActive
+    }
+
+    /// At most this many presets of a kind go to the watch, each name at most
+    /// `maximumNameLength` characters.
+    static let maximumCount = 16
+    static let maximumNameLength = 32
+    static let tokenPrefix = "~"
+
+    /// The id the watch sends back: the host's own when it is plain (letters,
+    /// digits, `.`, `_`, `-`, at most 64), so it can't break `override:<id>@<time>`;
+    /// otherwise `~` and 12 hex digits of its SHA-256, mapped back on request.
+    var watchID: String {
+        if id.range(of: "^[A-Za-z0-9._-]{1,64}$", options: .regularExpression) != nil {
+            return id
+        }
+        let digest = SHA256.hash(data: Data(id.utf8)).map { String(format: "%02x", $0) }.joined()
+        return Self.tokenPrefix + digest.prefix(12)
+    }
+
+    /// The presets as Luped Remote gets them: `[[id, name, running], …]`, at most
+    /// `maximumCount`, with ids it can send back and names it can draw; null
+    /// when the host has none of that kind.
+    static func watchList(_ presets: [LupedPreset]?) -> Any {
+        presets.map {
+            $0.prefix(maximumCount).enumerated().map { index, preset in
+                [preset.watchID, watchName(preset.name, fallback: "Preset \(index + 1)"), preset.isActive ? 1 : 0] as [Any]
+            }
+        } ?? NSNull()
+    }
+
+    /// The name as the watch can draw it: no control or invisible characters,
+    /// emoji or other symbols (the watch fonts have none), whitespace collapsed,
+    /// at most `maximumNameLength` characters; `fallback` when nothing is left.
+    static func watchName(_ name: String, fallback: String) -> String {
+        var kept = String.UnicodeScalarView()
+        // Precomposed first, so an accent typed as a separate mark stays (é, not e).
+        for scalar in name.precomposedStringWithCanonicalMapping.unicodeScalars {
+            let properties = scalar.properties
+            // Line breaks and tabs separate words: a space, before control
+            // characters are dropped.
+            if properties.isWhitespace {
+                kept.append(" ")
+                continue
+            }
+            switch properties.generalCategory {
+            case .control, .format, .surrogate, .privateUse, .unassigned, .otherSymbol, .nonspacingMark, .enclosingMark:
+                continue
+            default:
+                break
+            }
+            if scalar.value > 0xFFFF || (properties.isEmojiPresentation && scalar.value > 0x7F) {
+                continue
+            }
+            kept.append(scalar)
+        }
+        let collapsed = String(kept).split(separator: " ").joined(separator: " ")
+        let short = collapsed.count > maximumNameLength ? String(collapsed.prefix(maximumNameLength - 1)).trimmingCharacters(in: .whitespaces) + "…" : collapsed
+        return short.isEmpty ? fallback : short
     }
 }
 

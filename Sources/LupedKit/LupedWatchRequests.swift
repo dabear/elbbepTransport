@@ -42,6 +42,8 @@ enum LupedWatchRequest: Equatable {
     case override(LupedPresetAction?)
     case tempTarget(LupedPresetAction?)
     case recommend(grams: Double?, absorption: LupedCarbAbsorption? = nil)
+    /// Luped Remote asks for the host's presets, to list them (`presets`).
+    case presets
 
     init?(command: String) {
         let parts = command.split(separator: ":", maxSplits: 1).map(String.init)
@@ -57,6 +59,8 @@ enum LupedWatchRequest: Equatable {
             self = .override(preset)
         case "temptarget":
             self = .tempTarget(preset)
+        case "presets":
+            self = .presets
         case "recommend":
             let (grams, absorption) = Self.grams(argument, allowingZero: true)
             self = .recommend(grams: grams, absorption: absorption)
@@ -84,6 +88,7 @@ enum LupedWatchRequest: Equatable {
         case .override: "override"
         case .tempTarget: "temptarget"
         case .recommend: "recommend"
+        case .presets: "presets"
         }
     }
 }
