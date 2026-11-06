@@ -180,6 +180,12 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// with whether the watch's Quiet Time is on, so the host keeps
     /// `LupedSettings.watchHasSpeaker` and offers the alarm sound.
     public var speakerDidReport: ((Bool) -> Void)?
+    /// Whether to ask the watchface for its speaker (`COMMAND speaker`), once per
+    /// session after it acknowledges a reading. The host turns it on while it
+    /// doesn't know the watch has one (a watch added again, its watchface still
+    /// running); a speaker report turns it off. Watches older than Luped 0.1.26
+    /// ignore the question, as they ignore any `COMMAND` they don't know.
+    public var asksForSpeaker = false
     /// Supplies the current readings and alert state. Returns `nil` while the
     /// host is not ready; throwing logs the error.
     public var snapshotProvider: (() async throws -> LupedSnapshot?)?
@@ -269,6 +275,10 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// in flight, which goes to the other app if this one rejects it.
     private var pendingFind: LupedFindRequest?
     private var inflightFind: LupedFindRequest?
+    /// `asksForSpeaker`'s question, until sent, and whether this watchface
+    /// session was asked already.
+    private var speakerQueryPending = false
+    private var speakerAskedInSession = false
     /// Outcomes of the watch's requests waiting to go back to it (`RESULT`), oldest first.
     private var pendingResults: [String] = []
     /// The answer to Luped Remote's recommendation request (`RECOMMEND`), until sent.
@@ -578,6 +588,9 @@ public final class LupedTransport: PebbleTransportDelegate {
 
     public func pebbleTransportSessionDidOpen(_ source: PebbleTransport) {
         let opened = app(of: source)
+        if opened == .watchface {
+            speakerAskedInSession = false
+        }
         let next = LupedRouting.foreground(afterOpening: opened, current: foreground, openSessions: openSessions.subtracting([opened]))
         guard next == opened else {
             // The watch opens a session for each app; this one is sent to once
@@ -680,6 +693,8 @@ public final class LupedTransport: PebbleTransportDelegate {
         } else if let command, let quietTime = LupedWatchSpeaker.quietTime(reportedIn: command) {
             record(.fromWatch, "\(sender.logLabel) has a speaker for the alarm sound" + (quietTime ? "; the watch's Quiet Time is on, which can mute it" : "") + " (COMMAND \(command))")
             status.speaker = LupedWatchSpeaker(quietTime: quietTime, reportedAt: Date())
+            asksForSpeaker = false
+            speakerQueryPending = false
             speakerDidReport?(quietTime)
         } else if let command {
             // An action LupedKit doesn't know (`bolus:` is gone) or a malformed
@@ -775,6 +790,10 @@ public final class LupedTransport: PebbleTransportDelegate {
                 if issuesBolusKey {
                     startBolusSession()
                 }
+            }
+            if asksForSpeaker, foreground == .watchface, !speakerAskedInSession {
+                speakerAskedInSession = true
+                speakerQueryPending = true
             }
             if push.payload.hostAlertState > 0, push.payload.alertEvent != deliveredAlerts.last?.event {
                 deliveredAlerts.append(.init(event: push.payload.alertEvent, level: push.payload.hostAlertState, deliveredAt: Date()))
@@ -993,7 +1012,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             pendingFind = nil
             findNotDelivered("the watch didn't take it within 30 s")
         }
-        guard pendingFind != nil || pendingBolusKey != nil || !pendingRemoteAnswers.isEmpty || diagnosticsRequested || !pendingResults.isEmpty, inflightPush == nil, inflightCommand == nil, transport.isSessionOpen else {
+        guard pendingFind != nil || pendingBolusKey != nil || !pendingRemoteAnswers.isEmpty || diagnosticsRequested || !pendingResults.isEmpty || speakerQueryPending, inflightPush == nil, inflightCommand == nil, transport.isSessionOpen else {
             return
         }
         let transactionID = transport.makeTransactionID()
@@ -1021,11 +1040,17 @@ public final class LupedTransport: PebbleTransportDelegate {
             inflightCommand = (transactionID, "COMMAND diagnostics")
             record(.toWatch, "#\(transactionID) COMMAND diagnostics")
             transport.push(transactionID: transactionID, tuples: [(LupedMessageKey.command, .cString("diagnostics"))])
-        } else {
+        } else if !pendingResults.isEmpty {
             let result = pendingResults.removeFirst()
             inflightCommand = (transactionID, "RESULT \(result)")
             record(.toWatch, "#\(transactionID) RESULT \(result)")
             transport.push(transactionID: transactionID, tuples: [(LupedMessageKey.result, .cString(result))])
+        } else {
+            // Last: the watchface answers with its speaker report, if it has one.
+            speakerQueryPending = false
+            inflightCommand = (transactionID, "COMMAND speaker")
+            record(.toWatch, "#\(transactionID) COMMAND speaker: asking the watchface whether it has a speaker for the alarm sound")
+            transport.push(transactionID: transactionID, tuples: [(LupedMessageKey.command, .cString("speaker"))])
         }
 
         commandAckTimeout?.cancel()
