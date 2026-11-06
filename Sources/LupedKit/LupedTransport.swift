@@ -186,6 +186,12 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// running); a speaker report turns it off. Watches older than Luped 0.1.26
     /// ignore the question, as they ignore any `COMMAND` they don't know.
     public var asksForSpeaker = false
+    /// Begins a background task named for its purpose and returns what ends it.
+    /// A delayed send (waiting for the loop result, its dose, or more changes)
+    /// holds one until it has sent, so iOS doesn't suspend the host halfway and
+    /// leave the watch without the reading until the app is opened again. The
+    /// host ends it itself if iOS takes the time back first. `nil`: no task.
+    public var beginBackgroundTask: (@MainActor (_ name: String) -> (@MainActor () -> Void))?
     /// Supplies the current readings and alert state. Returns `nil` while the
     /// host is not ready; throwing logs the error.
     public var snapshotProvider: (() async throws -> LupedSnapshot?)?
@@ -257,6 +263,8 @@ public final class LupedTransport: PebbleTransportDelegate {
     private var delayedSend: Task<Void, Never>?
     private var delayedSendTiming: LupedDelivery.Timing?
     private var delayedSendStarted = Date.distantPast
+    /// Ends the background task the delayed send holds.
+    private var endDelayedSendBackgroundTask: (@MainActor () -> Void)?
     /// Until then, sends aren't delayed: the user just changed a setting, and the
     /// host's snapshot with what it now requests should show at once.
     private var sendImmediatelyUntil = Date.distantPast
@@ -474,6 +482,10 @@ public final class LupedTransport: PebbleTransportDelegate {
         delayedSend?.cancel()
         delayedSendTiming = timing
         delayedSendStarted = Date()
+        // The new task first, so the app keeps running while one ends and the other begins.
+        let endPrevious = endDelayedSendBackgroundTask
+        endDelayedSendBackgroundTask = beginBackgroundTask?("Luped: send the reading to the watch")
+        endPrevious?()
         delayedSend = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
@@ -482,6 +494,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             }
             self.delayedSend = nil
             self.delayedSendTiming = nil
+            defer { self.endDelayedSendBackgroundTaskIfAny() }
             // A forced send (new session, watch request, Send Now) may have sent it already.
             guard let latest = self.latestPayload,
                   LupedDelivery.unchangedData(latest.data, delivered: self.deliveredPayload?.data, inFlight: self.inflightPush?.payload.data) == nil
@@ -494,6 +507,13 @@ public final class LupedTransport: PebbleTransportDelegate {
         delayedSend?.cancel()
         delayedSend = nil
         delayedSendTiming = nil
+        endDelayedSendBackgroundTaskIfAny()
+    }
+
+    private func endDelayedSendBackgroundTaskIfAny() {
+        let end = endDelayedSendBackgroundTask
+        endDelayedSendBackgroundTask = nil
+        end?()
     }
 
     // MARK: - Settings
