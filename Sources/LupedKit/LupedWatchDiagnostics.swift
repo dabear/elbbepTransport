@@ -76,7 +76,7 @@ extension LupedWatchDiagnostics {
         "phone disconnected now (1 = yes)",
         "system pop-ups over the watchface (notifications, alarms, calls)",
         "recent host-alert buzzes (listed below)",
-        "alert events while Watch Alarms was off (not buzzed)",
+        "alert events with no active alert (not buzzed: Watch Alarms off, or the phone's alert number changed)",
     ]
 
     /// Index of Luped's recent host-alert buzzes: up to 5 of

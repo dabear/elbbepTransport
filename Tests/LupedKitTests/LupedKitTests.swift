@@ -373,7 +373,7 @@ final class LupedWatchDiagnosticsLogTests: XCTestCase {
         values.append([3, 1, 0, 0, 0, 0, 0, 0])  // index 30: latency buckets
         values += Array(repeating: 0, count: 8)
         values.append([])  // index 39: no buzzes
-        values.append(0)  // index 40: alert events while Watch Alarms was off
+        values.append(0)  // index 40: alert events with no active alert
         XCTAssertEqual(values.count, LupedWatchDiagnostics.fieldDescriptions.count)
         let json = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: values), encoding: .utf8))
 
