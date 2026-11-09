@@ -42,3 +42,25 @@ final class InboundFrameLimitTests: XCTestCase {
         XCTAssertFalse(PebbleTransport.acceptsInboundPayload(length: 0xFFFF))
     }
 }
+
+/// The diagnosis only explains the wait: publishing the service again is up to
+/// the app layer (LupedKit), so the line doesn't claim it.
+final class WaitDiagnosisTests: XCTestCase {
+    func testConnectedDiagnosisDoesNotClaimTheServiceIsPublishedAgain() {
+        let line = PebbleWatchProbe.diagnosis(.init(pebbleConnected: true, offersReversed: false), minutes: 1)
+        XCTAssertTrue(line.contains("the watch does not open this app's service."), line)
+        XCTAssertFalse(line.contains("published again"), line)
+    }
+}
+
+/// A session opened through PPoGATT counts as the transport having its watch.
+@MainActor
+final class HasWatchTests: XCTestCase {
+    func testAnOpenSessionHasItsWatch() {
+        let transport = PebbleTransport(isEnabled: true, appUUID: UUID())
+        XCTAssertFalse(transport.hasWatch)
+        transport.handlePacket([2]) // PPoGATT reset request
+        transport.handlePacket([3]) // PPoGATT reset complete
+        XCTAssertTrue(transport.hasWatch)
+    }
+}

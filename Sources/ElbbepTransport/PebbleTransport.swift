@@ -112,6 +112,15 @@ public protocol PebbleTransportDelegate: AnyObject {
     func pebbleTransport(_ transport: PebbleTransport, didReceive tuples: [UInt32: AppMessageTuple], message: [UInt8])
     /// The watch's ACK or NACK of one of our pushes. `message` is the raw payload.
     func pebbleTransport(_ transport: PebbleTransport, didReceiveReply acknowledged: Bool, transactionID: UInt8, message: [UInt8])
+    /// The service has waited a while with no watch, and `PebbleWatchProbe`
+    /// found whether a Pebble is connected to this iPhone. Called on every wait
+    /// check, so the app layer can `republishService(nextWaitCheckIn:)` when
+    /// none of its transports has a watch. Optional.
+    func pebbleTransport(_ transport: PebbleTransport, isWaitingWithPebbleConnected pebbleConnected: Bool)
+}
+
+public extension PebbleTransportDelegate {
+    func pebbleTransport(_ transport: PebbleTransport, isWaitingWithPebbleConnected pebbleConnected: Bool) {}
 }
 
 /// A generic phone-side Pebble link for one JS-free watch app.
@@ -188,6 +197,9 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
     /// How long without a watch session before the first check, and between checks.
     static let waitCheckDelay: TimeInterval = 90
     static let waitCheckInterval: TimeInterval = 300
+    /// The first check's delay after `republishService(nextWaitCheckIn:)`, in place
+    /// of `waitCheckDelay`; cleared when a watch subscribes or the settings change.
+    private var nextWaitCheckDelay: TimeInterval?
 
     public init(isEnabled: Bool, appUUID: UUID) {
         self.isEnabled = isEnabled
@@ -200,6 +212,11 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
             return true
         }
         return false
+    }
+
+    /// A watch subscribed or wrote to the service: its session is open or opening.
+    public var hasWatch: Bool {
+        watch != nil || isSessionOpen
     }
 
     public nonisolated static func hex<Bytes: Sequence>(_ bytes: Bytes) -> String where Bytes.Element == UInt8 {
@@ -261,6 +278,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
 
         closeSession(reason: "settings changed")
         watch = nil
+        nextWaitCheckDelay = nil
         if let publishedService {
             peripheralManager?.remove(publishedService)
         }
@@ -387,6 +405,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         refusedCentrals.removeAll()
         cancelWaitCheck()
         lastWaitDiagnosis = nil
+        nextWaitCheckDelay = nil
     }
 
     public func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom characteristic: CBCharacteristic) {
@@ -594,13 +613,15 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
     // MARK: - Waiting for the watch
 
     /// Checks back while the service is published but no watch has subscribed,
-    /// and logs why when the reason changes.
+    /// logs why when the reason changes, and tells the delegate on every check.
     private func scheduleWaitCheck() {
         cancelWaitCheck()
         watchProbe.prepare()
         let started = Date()
+        let firstDelay = nextWaitCheckDelay ?? Self.waitCheckDelay
+        nextWaitCheckDelay = nil
         waitCheck = Task { [weak self] in
-            var delay = Self.waitCheckDelay
+            var delay = firstDelay
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 guard !Task.isCancelled, let self, self.isEnabled, self.isServicePublished, self.watch == nil else {
@@ -614,13 +635,36 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
                 let diagnosis = PebbleWatchProbe.diagnosis(result, minutes: max(minutes, 1))
                 // Compare without the minutes so a still-waiting link isn't logged again.
                 let key = PebbleWatchProbe.diagnosis(result, minutes: 0)
-                guard key != self.lastWaitDiagnosis else {
-                    continue
+                if key != self.lastWaitDiagnosis {
+                    self.lastWaitDiagnosis = key
+                    self.record(result.pebbleConnected ? .error : .info, diagnosis)
                 }
-                self.lastWaitDiagnosis = key
-                self.record(result.pebbleConnected ? .error : .info, diagnosis)
+                // May publish the service again, which cancels this check.
+                self.delegate?.pebbleTransport(self, isWaitingWithPebbleConnected: result.pebbleConnected)
             }
         }
+    }
+
+    /// Does what restarting the app does: a new peripheral manager publishes the
+    /// service again, so a watch that dropped it while staying connected to the
+    /// phone finds it. Ends any session. The first wait check comes
+    /// `nextWaitCheckIn` seconds after the service is published, not `waitCheckDelay`.
+    public func republishService(nextWaitCheckIn delay: TimeInterval) {
+        guard isEnabled else {
+            return
+        }
+        record(.info, "Publishing the PPoGATT service again on a new Bluetooth peripheral manager")
+        closeSession(reason: "service published again")
+        watch = nil
+        cancelWaitCheck()
+        if let publishedService {
+            peripheralManager?.remove(publishedService)
+        }
+        publishedService = nil
+        dataCharacteristic = nil
+        peripheralManager?.delegate = nil
+        nextWaitCheckDelay = delay
+        peripheralManager = CBPeripheralManager(delegate: self, queue: .main)
     }
 
     private func cancelWaitCheck() {

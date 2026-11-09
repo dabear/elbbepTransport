@@ -60,6 +60,6 @@ final class PebbleWatchProbe: NSObject, @preconcurrency CBCentralManagerDelegate
         let suffix = result.offersReversed
             ? " The watch offers reversed PPoGATT (the watch hosts the link and sends all its traffic to the phone app connected to it)."
             : ""
-        return String(format: "No watch session for %ld min, but a Pebble is connected to this iPhone: the Pebble app is probably using reversed PPoGATT, so the watch does not open this app's service.%@ In the Pebble app, turn off the debug setting \u{201C}Reversed PPoG\u{201D} and reconnect the watch.", minutes, suffix)
+        return String(format: "No watch session for %ld min, but a Pebble is connected to this iPhone: the watch does not open this app's service.%@ If it stays that way, in the Pebble app, turn off the debug setting \u{201C}Reversed PPoG\u{201D} and reconnect the watch.", minutes, suffix)
     }
 }
