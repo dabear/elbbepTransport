@@ -29,6 +29,30 @@ final class LupedSessionResetTests: XCTestCase {
         XCTAssertEqual(sent("COMMAND findpebble:60", in: transport), 2, "Find my Pebble in flight at the reset was lost")
     }
 
+    /// The phone sends to Luped Remote, whose session then closes while the
+    /// watchface's stays open: the next reading goes to the watchface instead
+    /// of being skipped until the watchface sends something.
+    func testAClosedSessionSendsToTheOtherApp() async throws {
+        let (transport, watchface) = try await connectedTransport()
+        let remote = transport.remoteTransport
+        transport.pebbleTransport(watchface, didReceiveReply: true, transactionID: 0, message: [])
+        transport.pebbleTransport(remote, didReceive: [PebbleAppMessage.alloyReadyKey: AppMessageTuple(type: PebbleAppMessage.tupleUnsigned, value: [1])], message: Array(repeating: 0, count: 20))
+        XCTAssertEqual(transport.foreground, .remote)
+        try await acknowledgeReading(on: remote, of: transport)
+
+        remote.reconfigure(isEnabled: true, appUUID: remote.appUUID)
+        XCTAssertFalse(remote.isSessionOpen)
+        let newer = Date()
+        transport.snapshotProvider = {
+            LupedSnapshot(readings: [LupedReading(date: newer, milligramsPerDeciliter: 130, trend: .flat)], storedSampleCount: 1, unit: .milligramsPerDeciliter)
+        }
+        await transport.refresh()
+        transport.sendIfNeeded()
+
+        XCTAssertEqual(transport.foreground, .watchface, "the reading was skipped: Luped Remote's session is closed")
+        XCTAssertEqual(count("Send skipped: no watch session", in: transport), 0)
+    }
+
     func testABolusDeliveryFailureTellsTheUserToCheckThePump() {
         XCTAssertEqual(LupedResultReason.checkPump.appended(to: "signedbolus:failed"), "signedbolus:failed:check pump")
     }

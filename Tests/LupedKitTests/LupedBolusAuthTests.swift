@@ -100,6 +100,7 @@ final class LupedBolusAuthTests: XCTestCase {
         XCTAssertEqual(request.grams, 30)
         XCTAssertFalse(request.forced)
         XCTAssertEqual(request.confirmedAt, Date(timeIntervalSince1970: 1_798_000_000))
+        auth.record(result: "signedbolus:ok")
         guard case .accept(let plain) = verify(command(grams: nil, sequence: 2), with: &auth) else {
             return XCTFail("Not accepted without carbs")
         }
@@ -183,6 +184,7 @@ final class LupedBolusAuthTests: XCTestCase {
         guard case .accept = verify(command(sequence: 3), with: &auth, at: Date(timeIntervalSince1970: 1_798_000_030)) else {
             return XCTFail("30 s old is still accepted")
         }
+        auth.record(result: "signedbolus:ok")
         guard case .accept = verify(command(sequence: 4), with: &auth, at: Date(timeIntervalSince1970: 1_797_999_995)) else {
             return XCTFail("5 s ahead is still accepted")
         }
@@ -217,6 +219,24 @@ final class LupedBolusAuthTests: XCTestCase {
         XCTAssertTrue(isRefused(verify(command(sequence: 3), with: &auth)))
         XCTAssertTrue(isRefused(verify(command(sequence: 4), with: &auth)))
         guard case .accept = verify(command(sequence: 6), with: &auth) else { return XCTFail("The next one is accepted") }
+    }
+
+    /// One request at a time: a newer one while the first has no bolus result
+    /// would take over its results. After the open request's timeout it no
+    /// longer blocks, so a lost answer can't stop boluses for the whole session.
+    func testANewerRequestWaitsForTheOpenOne() {
+        var auth = auth()
+        guard case .accept = verify(command(sequence: 1), with: &auth) else { return XCTFail("Not accepted") }
+        guard case .refuse(_, .inProgress) = verify(command(sequence: 2), with: &auth) else { return XCTFail("A newer request took over the open one") }
+        auth.record(result: "carbs:ok")
+        auth.record(result: "signedbolus:ok")
+        XCTAssertEqual(verify(command(sequence: 1), with: &auth), .resend(["carbs:ok", "signedbolus:ok"]), "the first request's results stay its own")
+        guard case .accept = verify(command(sequence: 3), with: &auth) else { return XCTFail("The next one is accepted once the first is answered") }
+
+        let later = now.addingTimeInterval(LupedBolusAuth.openRequestTimeout + 1)
+        guard case .accept = verify(command(confirmedAt: String(Int(later.timeIntervalSince1970) - 5), sequence: 4), with: &auth, at: later) else {
+            return XCTFail("An unanswered request blocked boluses after its timeout")
+        }
     }
 
     func testOnlyTheLastFewResultsAreKept() {

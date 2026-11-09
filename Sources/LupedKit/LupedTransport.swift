@@ -1258,6 +1258,13 @@ public final class LupedTransport: PebbleTransportDelegate {
             return
         }
         guard transport.isSessionOpen else {
+            // Its session closed while the other app's is open: the watch would
+            // get no reading until that app sends something.
+            if let other = openSessions.first {
+                switchForeground(to: other, "\(foreground.name)'s session is closed")
+                sendIfNeeded(force: true)
+                return
+            }
             record(.info, "Send skipped: no watch session")
             return
         }

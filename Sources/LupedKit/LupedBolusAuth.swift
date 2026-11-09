@@ -88,6 +88,9 @@ struct LupedBolusAuth {
     static let maximumClockSkew: TimeInterval = 5
     /// Handled requests whose results are kept for resends.
     static let storedResultCount = 5
+    /// How long a request passed on without a bolus result keeps a newer one
+    /// out; after that the host is taken to have dropped it.
+    static let openRequestTimeout: TimeInterval = 120
 
     enum Verdict: Equatable {
         /// New and valid: pass it to the host.
@@ -106,7 +109,7 @@ struct LupedBolusAuth {
         var keyDelivered = false
         var lastSequence = 0
         /// The request being handled, with the results it has produced so far.
-        var open: (sequence: Int, wantsCarbs: Bool, results: [String])?
+        var open: (sequence: Int, wantsCarbs: Bool, results: [String], since: Date)?
         var results: [(sequence: Int, results: [String])] = []
     }
 
@@ -181,6 +184,11 @@ struct LupedBolusAuth {
         guard request.sequence > session.lastSequence else {
             return .refuse("sequence \(request.sequence) is not after \(session.lastSequence)", .notVerified)
         }
+        // One at a time: a newer request while one is still being handled would
+        // take over its results.
+        if let open = session.open, now.timeIntervalSince(open.since) < Self.openRequestTimeout {
+            return .refuse("request \(open.sequence) is still being handled", .inProgress)
+        }
         let age = now.timeIntervalSince(request.confirmedAt)
         guard age <= Self.maximumAge else {
             return .refuse(String(format: "confirmed %.0f s ago, more than %.0f s", age, Self.maximumAge), .tooOld)
@@ -189,7 +197,7 @@ struct LupedBolusAuth {
             return .refuse(String(format: "confirmed %.0f s in the future", -age), .tooOld)
         }
         session.lastSequence = request.sequence
-        session.open = (request.sequence, request.gramsText != nil, [])
+        session.open = (request.sequence, request.gramsText != nil, [], now)
         self.session = session
         return .accept(request)
     }
