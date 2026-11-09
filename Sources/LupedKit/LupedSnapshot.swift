@@ -33,8 +33,11 @@ public struct LupedSnapshot {
     /// The host's temp target presets; `nil` for hosts without temp targets
     /// (Loop), so Luped Remote offers none.
     public var tempTargetPresets: [LupedPreset]?
+    /// Whether the host uses the fast, medium or slow chosen for carbs; when
+    /// false (Trio), Luped Remote doesn't ask for it.
+    public var usesCarbAbsorption: Bool
 
-    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, therapy: LupedTherapy? = nil, overridePresets: [LupedPreset]? = nil, tempTargetPresets: [LupedPreset]? = nil) {
+    public init(readings: [LupedReading], storedSampleCount: Int, unit: LupedUnit, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, loopStatus: LupedLoopStatus? = nil, therapy: LupedTherapy? = nil, overridePresets: [LupedPreset]? = nil, tempTargetPresets: [LupedPreset]? = nil, usesCarbAbsorption: Bool = true) {
         self.readings = readings
         self.storedSampleCount = storedSampleCount
         self.unit = unit
@@ -45,6 +48,7 @@ public struct LupedSnapshot {
         self.therapy = therapy
         self.overridePresets = overridePresets
         self.tempTargetPresets = tempTargetPresets
+        self.usesCarbAbsorption = usesCarbAbsorption
     }
 }
 

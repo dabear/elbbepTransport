@@ -59,10 +59,40 @@ final class LupedPresetTests: XCTestCase {
     }
 
     func testDataIsUnchanged() throws {
-        for remote in [false, true] {
-            let values = try fields(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, hostName: "Loop", remote: remote))
-            XCTAssertEqual(values.count, 16, "no presets in DATA; Luped Remote asks for them")
-        }
+        let watchface = try fields(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, hostName: "Loop"))
+        XCTAssertEqual(watchface.count, 16, "no presets in DATA; Luped Remote asks for them")
+        let remote = try fields(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, hostName: "Loop", remote: true))
+        XCTAssertEqual(remote.count, 17, "Luped Remote also gets whether to ask for carb absorption")
+    }
+
+    // MARK: - Carb absorption
+
+    func testRemoteIsToldWhetherTheHostUsesCarbAbsorption() throws {
+        let loop = try fields(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, hostName: "Loop", remote: true))
+        XCTAssertEqual(loop[16] as? Int, 1)
+        let trio = try fields(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, hostName: "Trio", remote: true, usesCarbAbsorption: false))
+        XCTAssertEqual(trio[16] as? Int, 0)
+    }
+
+    /// Index 16 stays at 16 when the host's name is unknown.
+    func testCarbAbsorptionKeepsItsIndexWithoutAHostName() throws {
+        let values = try fields(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, remote: true, usesCarbAbsorption: false))
+        XCTAssertEqual(values.count, 17)
+        XCTAssertTrue(values[15] is NSNull)
+        XCTAssertEqual(values[16] as? Int, 0)
+    }
+
+    func testWatchfaceGetsNoCarbAbsorptionField() throws {
+        let values = try fields(LupedPayload(readings: readings, unit: .milligramsPerDeciliter, fullScreen: false, hostName: "Trio", usesCarbAbsorption: false))
+        XCTAssertEqual(values.count, 16)
+    }
+
+    @MainActor
+    func testTheSnapshotDecidesWhatRemoteIsTold() throws {
+        let transport = LupedTransport(hostName: "Trio", settings: LupedSettings(isEnabled: true, remoteEnabled: true))
+        let snapshot = LupedSnapshot(readings: readings, storedSampleCount: readings.count, unit: .milligramsPerDeciliter, usesCarbAbsorption: false)
+        XCTAssertEqual(try fields(transport.payload(from: snapshot, for: .remote))[16] as? Int, 0)
+        XCTAssertEqual(try fields(transport.payload(from: snapshot, for: .watchface)).count, 16)
     }
 
     func testAtMostSixteenPresetsWithFallbackNames() throws {

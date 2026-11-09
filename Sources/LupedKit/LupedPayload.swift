@@ -105,8 +105,9 @@ public struct LupedPayload: Equatable {
     /// older watches only compare it.
     /// `settings` lets the log decode say why a loop status or status line field is
     /// `null`: the user's Layout, Status Line and Last Loop choices, or a value the host
-    /// didn't provide. `remote` leaves the history out: Luped Remote draws no graph.
-    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, alertSound: Bool? = nil, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil, hostName: String? = nil, settings: LupedSettings = LupedSettings(), remote: Bool = false) {
+    /// didn't provide. `remote` leaves the history out: Luped Remote draws no graph,
+    /// and adds whether the host uses carb absorption (`usesCarbAbsorption`).
+    init?(readings: [LupedReading], unit: LupedUnit, fullScreen: Bool, hostAlertState: Int = 0, hostAlertReason: String? = nil, alertEvent: Int = 0, alertSound: Bool? = nil, loopStatus: LupedLoopStatus? = nil, statusLine: String? = nil, hostName: String? = nil, settings: LupedSettings = LupedSettings(), remote: Bool = false, usesCarbAbsorption: Bool = true) {
         let readings = Self.graphReadings(readings, limit: 12)
         guard let latest = readings.last else {
             return nil
@@ -154,6 +155,13 @@ public struct LupedPayload: Equatable {
         // tell two apps apart.
         if let hostName {
             fields.append((hostName, "host app (the app sending this)"))
+        } else if remote {
+            fields.append((NSNull(), "host app (not known)"))
+        }
+        // Index 16, for Luped Remote only: 0 when the host ignores the fast, medium or
+        // slow chosen for carbs, so Remote doesn't ask for it. Older watches ignore it.
+        if remote {
+            fields.append((usesCarbAbsorption ? 1 : 0, usesCarbAbsorption ? "carb absorption: asked for (the host uses it)" : "carb absorption: not asked for (the host doesn't use it)"))
         }
         let message = fields.map(\.value)
 

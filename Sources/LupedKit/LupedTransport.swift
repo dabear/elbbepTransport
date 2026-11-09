@@ -427,7 +427,7 @@ public final class LupedTransport: PebbleTransportDelegate {
 
     /// The `DATA` for `app`: the watchface's follows its display settings;
     /// Luped Remote always gets IOB, COB and loop status, and no history.
-    private func payload(from snapshot: LupedSnapshot, for app: LupedWatchApp) -> LupedPayload? {
+    func payload(from snapshot: LupedSnapshot, for app: LupedWatchApp) -> LupedPayload? {
         let shown = app == .remote ? settings.remote : settings
         // Whether an alert sounds is decided when it first goes out with a
         // level above 0, and kept, so a settings change doesn't buzz it again.
@@ -437,7 +437,7 @@ public final class LupedTransport: PebbleTransportDelegate {
                 ? (snapshot.alertEvent, settings.soundsAlarm(hostAlertState: snapshot.hostAlertState))
                 : nil
         }
-        return LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: shown.fullScreen, hostAlertState: snapshot.hostAlertState, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, alertSound: alertSoundDecision?.sounded, loopStatus: shown.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(shown.shownStatusLine, therapy: snapshot.therapy, unit: snapshot.unit), hostName: hostName, settings: shown, remote: app == .remote)
+        return LupedPayload(readings: snapshot.readings, unit: snapshot.unit, fullScreen: shown.fullScreen, hostAlertState: snapshot.hostAlertState, hostAlertReason: snapshot.hostAlertReason, alertEvent: snapshot.alertEvent, alertSound: alertSoundDecision?.sounded, loopStatus: shown.loopStatusToSend(snapshot.loopStatus), statusLine: LupedPayload.statusLine(shown.shownStatusLine, therapy: snapshot.therapy, unit: snapshot.unit), hostName: hostName, settings: shown, remote: app == .remote, usesCarbAbsorption: snapshot.usesCarbAbsorption)
     }
 
     /// Sends now, or after a short wait so a reading and the loop result that
