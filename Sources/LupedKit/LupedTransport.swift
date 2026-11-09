@@ -151,6 +151,15 @@ public final class LupedTransport: PebbleTransportDelegate {
     }
     /// Apps that rejected a push since an app last accepted one or sent a message.
     private var rejectedApps = Set<LupedWatchApp>()
+    /// When each app last accepted a message or sent one: a rejection soon after
+    /// is from a busy app, not a closed one (`LupedRouting.isBusy`).
+    private var lastHeard: [LupedWatchApp: Date] = [:]
+    /// Whether the foreground app's busy rejection was already retried once since
+    /// it last accepted or sent something.
+    private var busyRetried = false
+    /// The app a rejection moved away from, until the new foreground app accepts
+    /// or sends something: if it doesn't answer at all, the phone goes back.
+    private var movedAwayFrom: LupedWatchApp?
     /// After moving to an app that may not be running either: give it a bolus
     /// key once it accepts the reading, not before.
     var bolusKeyOnDelivery = false
@@ -339,6 +348,8 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// and, when the host issues them, a bolus key of its own: now, or with
     /// `keyOnDelivery` once it accepts the reading.
     private func switchForeground(to app: LupedWatchApp, _ reason: String, keyOnDelivery: Bool = false) {
+        movedAwayFrom = nil
+        busyRetried = false
         guard app != foreground else { return }
         record(.info, "Sending to \(app.name) from now on: \(reason)")
         dropUnacknowledgedMessages(because: "\(foreground.name) is no longer running")
@@ -360,17 +371,65 @@ public final class LupedTransport: PebbleTransportDelegate {
         }
     }
 
-    /// After the foreground app rejected a message: moves to the other app and
-    /// returns `true` when its session is open and it hasn't rejected one too.
-    private func moveOnAfterRejection() -> Bool {
+    /// After the foreground app rejected a message (`command`'s label, or `nil`
+    /// for a reading): returns `true` when it was handled here. A busy app (it
+    /// accepted or sent something within `LupedRouting.busyWindow`) gets the
+    /// message again once, shortly; otherwise the phone moves to the other app
+    /// when its session is open and it hasn't rejected one too.
+    private func moveOnAfterRejection(of command: String?) -> Bool {
+        let now = Date()
+        if !busyRetried, LupedRouting.isBusy(rejectedAt: now, lastHeard: lastHeard[foreground]) {
+            busyRetried = true
+            let seconds = now.timeIntervalSince(lastHeard[foreground] ?? now)
+            record(.info, String(format: "%@ rejected a message %.0f s after it accepted or sent one: it's busy, not closed; sending again in %.0f s", foreground.name, seconds, LupedRouting.busyRetryDelay))
+            let isReading = command == nil
+            if let command, Self.bolusSessionID(inLabel: command) != nil {
+                // Sent again with the retry, as a new session's key.
+                bolusKeyOnDelivery = false
+                pendingBolusKey = bolusAuth.newSession()
+                record(.info, "New bolus session \(bolusAuth.session?.id ?? ""): requests signed with an earlier key are refused")
+            } else if command == "COMMAND speaker" {
+                speakerQueryPending = true
+            }
+            pushRetry?.cancel()
+            pushRetry = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(LupedRouting.busyRetryDelay * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                self?.sendIfNeeded(force: isReading)
+            }
+            return true
+        }
         rejectedApps.insert(foreground)
         guard let next = LupedRouting.next(afterRejectionBy: foreground, rejected: rejectedApps, openSessions: openSessions) else {
             rejectedApps.removeAll()
             return false
         }
+        let previous = foreground
         switchForeground(to: next, "\(foreground.name) rejected a message, so it isn't running", keyOnDelivery: true)
+        movedAwayFrom = previous
         sendIfNeeded(force: true)
         return true
+    }
+
+    /// After the foreground app gave no reply at all: when a rejection moved the
+    /// phone to it, goes back to the app it moved away from and returns `true`.
+    /// The silent app counts as rejected, so the two can't take turns for ever.
+    private func moveBackAfterSilence() -> Bool {
+        guard let back = movedAwayFrom, openSessions.contains(back) else { return false }
+        let silent = foreground
+        switchForeground(to: back, "\(silent.name) didn't answer after \(back.name) rejected a message, so \(back.name) gets it again", keyOnDelivery: true)
+        rejectedApps.insert(silent)
+        sendIfNeeded(force: true)
+        return true
+    }
+
+    /// The app accepted a message or sent one: it is running.
+    private func heard(from app: LupedWatchApp) {
+        lastHeard[app] = Date()
+        if app == foreground {
+            busyRetried = false
+            movedAwayFrom = nil
+        }
     }
 
     /// Writes to the communication log and the host's diagnostic log.
@@ -683,6 +742,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         // Only the running app sends anything.
         rejectedApps.removeAll()
         let sender = app(of: source)
+        heard(from: sender)
         if sender == .remote {
             status.remoteLastSeen = Date()
         }
@@ -767,6 +827,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         }
         if acknowledged {
             rejectedApps.removeAll()
+            heard(from: foreground)
         }
         if let pending = inflightCommand, pending.transactionID == transactionID {
             inflightCommand = nil
@@ -784,7 +845,7 @@ public final class LupedTransport: PebbleTransportDelegate {
                 if let find {
                     pendingFind = find
                 }
-                if moveOnAfterRejection() {
+                if moveOnAfterRejection(of: pending.command) {
                     return
                 }
                 if result != nil {
@@ -858,7 +919,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         } else {
             // The watch rejects pushes while the app is not running.
             record(.fromWatch, "#\(transactionID) NACK in \(elapsed) ms · watch rejected the \(readingTime) reading; \(foreground.name) is probably not running\n" + LupedPayload.alignedRows([("bytes", PebbleTransport.hex(message))]))
-            if moveOnAfterRejection() {
+            if moveOnAfterRejection(of: nil) {
                 return
             }
             if pendingFind != nil {
@@ -1112,6 +1173,9 @@ public final class LupedTransport: PebbleTransportDelegate {
                 self.findNotDelivered("no reply from the watch")
             }
             self.inflightCommand = nil
+            if self.moveBackAfterSilence() {
+                return
+            }
             self.sendIfNeeded()
         }
     }
@@ -1173,6 +1237,9 @@ public final class LupedTransport: PebbleTransportDelegate {
             guard !Task.isCancelled, let self, self.inflightPush?.transactionID == transactionID else { return }
             self.record(.error, "#\(transactionID) no reply within \(Int(PebbleAppMessage.ackTimeout)) s")
             self.inflightPush = nil
+            if self.moveBackAfterSilence() {
+                return
+            }
             self.scheduleRetry()
         }
     }

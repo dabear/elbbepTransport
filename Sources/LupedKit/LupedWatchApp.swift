@@ -46,6 +46,21 @@ enum LupedRouting {
         let other = app.other
         return openSessions.contains(other) && !rejected.contains(other) ? other : nil
     }
+
+    /// How soon after an app accepted or sent something a rejection from it means
+    /// "busy", not "closed". Seen in the field: right after a reconnect the
+    /// watchface accepted a reading, sent its diagnostics, and rejected the bolus
+    /// key one second later while still running.
+    static let busyWindow: TimeInterval = 10
+    /// The wait before sending a busy app's rejected message again.
+    static let busyRetryDelay: TimeInterval = 2
+
+    /// Whether a rejection at `now` comes from an app that is busy rather than
+    /// closed: it accepted or sent something within `busyWindow`.
+    static func isBusy(rejectedAt now: Date, lastHeard: Date?) -> Bool {
+        guard let lastHeard else { return false }
+        return now.timeIntervalSince(lastHeard) < busyWindow
+    }
 }
 
 /// When to publish the watch apps' services again while a Pebble stays connected
