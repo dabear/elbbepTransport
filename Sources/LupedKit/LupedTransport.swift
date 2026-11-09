@@ -744,7 +744,23 @@ public final class LupedTransport: PebbleTransportDelegate {
         retryDelay = 0
         paused = false
         status.retryAt = nil
+        // A RESULT or Find my Pebble the watch didn't acknowledge goes out again
+        // in the new session; the watch may have taken it, and showing or
+        // starting it twice is harmless, losing it isn't.
+        if let pending = inflightCommand {
+            if let result = LupedDelivery.resultToResend(afterRestart: pending.command) {
+                record(.info, "RESULT \(result), unacknowledged at the session reset, goes out again")
+                pendingResults.insert(result, at: 0)
+            }
+            if let find = inflightFind {
+                record(.info, "COMMAND \(find.command), unacknowledged at the session reset, goes out again")
+                pendingFind = find
+            }
+        }
+        inflightFind = nil
         inflightCommand = nil
+        commandAckTimeout?.cancel()
+        commandAckTimeout = nil
         pendingRemoteAnswers.removeAll()
         endBolusSession()
     }

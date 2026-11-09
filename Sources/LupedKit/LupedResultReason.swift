@@ -32,6 +32,9 @@ public enum LupedResultReason: String, CaseIterable, Equatable {
     case oldKey = "old key"
     /// The signature or sequence didn't check out.
     case notVerified = "not verified"
+    /// The pump didn't confirm the bolus: it may be partly or not delivered,
+    /// so the user should check the pump before bolusing again.
+    case checkPump = "check pump"
 
     /// `result` with this reason as its third field. An `ok` result gets none:
     /// watches buzz "done" only for answers ending in `:ok`.
