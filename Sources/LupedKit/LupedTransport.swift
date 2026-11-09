@@ -951,6 +951,13 @@ public final class LupedTransport: PebbleTransportDelegate {
     public func sendNow() {
         record(.info, "Send Now requested")
         status.lastResult = nil
+        // The watchface first: whoever presses Send Now is usually looking at it,
+        // stuck on an old reading. If it isn't running it rejects the reading and
+        // Luped Remote gets it, as after any rejection.
+        if foreground != .watchface, openSessions.contains(.watchface) {
+            rejectedApps.removeAll()
+            switchForeground(to: .watchface, "Send Now goes to the watchface first", keyOnDelivery: true)
+        }
         guard transport.isSessionOpen else {
             status.lastResult = NSLocalizedString("The watch isn't connected; the reading is sent as soon as it connects.", bundle: .lupedKit, comment: "Pebble Send Now result: no watch session")
             Task { await refresh() }

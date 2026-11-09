@@ -143,7 +143,8 @@ or sent something (`foreground`), and to the other one after the first rejects a
 push. A rejection within 10 s of that app accepting or sending something means
 it is busy (as right after a reconnect), so it gets the message again once, 2 s
 later, before the phone moves on; and when the app the phone moved to gives no
-reply at all, the first one gets the message again. Both apps' requests reach the same callbacks; each app run gets its own
+reply at all, the first one gets the message again. Send Now always starts with
+the watchface. Both apps' requests reach the same callbacks; each app run gets its own
 bolus key; a `RESULT` goes to whichever app is running when it is sent, so the
 watchface shows the answer to a request the remote sent before it closed.
 `status.remoteLastSeen` is when Luped Remote last sent something (it does when

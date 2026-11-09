@@ -55,6 +55,20 @@ final class LupedRejectionRoutingTests: XCTestCase {
         XCTAssertEqual(count("Retrying in 30 s", in: transport), 1)
     }
 
+    /// Send Now after the phone moved to Luped Remote: the watchface gets the
+    /// reading (seen in the field: Send Now went to a Luped Remote that wasn't
+    /// running while the watch showed ERR).
+    func testSendNowGoesToTheWatchfaceFirst() async throws {
+        let (transport, watchface, _) = try await connectedTransport()
+        transport.pebbleTransport(watchface, didReceiveReply: false, transactionID: 0, message: [])
+        XCTAssertEqual(transport.foreground, .remote)
+
+        transport.sendNow()
+        XCTAssertEqual(transport.foreground, .watchface)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(count("#1 DATA", in: transport), 1, "Send Now didn't send the reading to the watchface")
+    }
+
     func testBusyMeansAcceptedOrSentWithinTheWindow() {
         let now = Date()
         XCTAssertFalse(LupedRouting.isBusy(rejectedAt: now, lastHeard: nil))
