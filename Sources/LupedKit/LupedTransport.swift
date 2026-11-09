@@ -302,6 +302,10 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// Answers only Luped Remote asks for (`RECOMMEND`, `PRESETS`), until sent.
     private var pendingRemoteAnswers: [(key: UInt32, name: String, value: String)] = []
     var bolusAuth = LupedBolusAuth()
+    /// The app that acknowledged the current session's key. Moving back to it,
+    /// when it hasn't restarted meanwhile, keeps that key: a request it signed is
+    /// still accepted. Cleared whenever the session changes or ends.
+    var keyHolder: LupedWatchApp?
     /// The `COMMAND auth:…` handing the watch its bolus session key, until sent.
     var pendingBolusKey: String?
     private var diagnosticsReplyTimeout: Task<Void, Never>?
@@ -347,7 +351,7 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// dropped (a `RESULT` goes to `app` instead), and `app` gets the reading
     /// and, when the host issues them, a bolus key of its own: now, or with
     /// `keyOnDelivery` once it accepts the reading.
-    private func switchForeground(to app: LupedWatchApp, _ reason: String, keyOnDelivery: Bool = false) {
+    private func switchForeground(to app: LupedWatchApp, _ reason: String, keyOnDelivery: Bool = false, restarted: Bool = false) {
         movedAwayFrom = nil
         busyRetried = false
         guard app != foreground else { return }
@@ -365,6 +369,11 @@ public final class LupedTransport: PebbleTransportDelegate {
         retryDelay = 0
         paused = false
         status.retryAt = nil
+        if keyHolder == app, !restarted {
+            // It still has the current key (see `keyHolder`).
+            bolusKeyOnDelivery = false
+            return
+        }
         bolusKeyOnDelivery = keyOnDelivery
         if issuesBolusKey, !keyOnDelivery {
             startBolusSession()
@@ -383,11 +392,13 @@ public final class LupedTransport: PebbleTransportDelegate {
             let seconds = now.timeIntervalSince(lastHeard[foreground] ?? now)
             record(.info, String(format: "%@ rejected a message %.0f s after it accepted or sent one: it's busy, not closed; sending again in %.0f s", foreground.name, seconds, LupedRouting.busyRetryDelay))
             let isReading = command == nil
-            if let command, Self.bolusSessionID(inLabel: command) != nil {
-                // Sent again with the retry, as a new session's key.
-                bolusKeyOnDelivery = false
-                pendingBolusKey = bolusAuth.newSession()
-                record(.info, "New bolus session \(bolusAuth.session?.id ?? ""): requests signed with an earlier key are refused")
+            if let command, let id = Self.bolusSessionID(inLabel: command) {
+                // The same key again with the retry, while keys are on and it is
+                // still the current session's (turned off or replaced meanwhile:
+                // nothing to send).
+                if issuesBolusKey, let key = bolusAuth.keyCommand(forSession: id) {
+                    pendingBolusKey = key
+                }
             } else if command == "COMMAND speaker" {
                 speakerQueryPending = true
             }
@@ -749,7 +760,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         let started = tuples[PebbleAppMessage.alloyReadyKey] != nil
         let switched = sender != foreground
         if switched {
-            switchForeground(to: sender, started ? "it started" : "it sent a message")
+            switchForeground(to: sender, started ? "it started" : "it sent a message", restarted: started)
         }
         resendIfCrossed()
         if started {
@@ -874,6 +885,9 @@ public final class LupedTransport: PebbleTransportDelegate {
                 }
             } else if acknowledged, let id = Self.bolusSessionID(inLabel: pending.command) {
                 bolusAuth.keyDelivered(session: id)
+                if bolusAuth.session?.id == id {
+                    keyHolder = foreground
+                }
                 record(.info, "Watch has the key for bolus session \(id): it can sign bolus requests")
             } else if !acknowledged {
                 noteUndelivered(pending.command, "the watch rejected it")
@@ -956,7 +970,10 @@ public final class LupedTransport: PebbleTransportDelegate {
         // Luped Remote gets it, as after any rejection.
         if foreground != .watchface, openSessions.contains(.watchface) {
             rejectedApps.removeAll()
+            let previous = foreground
             switchForeground(to: .watchface, "Send Now goes to the watchface first", keyOnDelivery: true)
+            // A watchface that doesn't answer at all sends the phone back.
+            movedAwayFrom = previous
         }
         guard transport.isSessionOpen else {
             status.lastResult = NSLocalizedString("The watch isn't connected; the reading is sent as soon as it connects.", bundle: .lupedKit, comment: "Pebble Send Now result: no watch session")

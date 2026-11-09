@@ -8,6 +8,7 @@ extension LupedTransport {
     /// Gives the watch a new bolus session key, replacing any earlier one.
     func startBolusSession() {
         bolusKeyOnDelivery = false
+        keyHolder = nil
         noteUnansweredBolus()
         pendingBolusKey = bolusAuth.newSession()
         record(.info, "New bolus session \(bolusAuth.session?.id ?? ""): requests signed with an earlier key are refused")
@@ -16,6 +17,7 @@ extension LupedTransport {
 
     func endBolusSession() {
         bolusKeyOnDelivery = false
+        keyHolder = nil
         guard bolusAuth.session != nil || pendingBolusKey != nil else { return }
         noteUnansweredBolus()
         record(.info, "Bolus session \(bolusAuth.session?.id ?? "") ended: signed bolus requests are refused until the watch gets a new key")

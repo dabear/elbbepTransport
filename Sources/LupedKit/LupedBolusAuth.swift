@@ -120,7 +120,18 @@ struct LupedBolusAuth {
 
     mutating func newSession(id: String, key: SymmetricKey) -> String {
         session = Session(id: id, key: key)
-        return "auth:v1:\(id):\(key.withUnsafeBytes { Self.hex(Array($0)) })"
+        return Self.keyCommand(id: id, key: key)
+    }
+
+    /// The `COMMAND` for session `id`'s key again, while it is the current
+    /// session and the watch hasn't acknowledged it; `nil` otherwise.
+    func keyCommand(forSession id: String) -> String? {
+        guard let session, session.id == id, !session.keyDelivered else { return nil }
+        return Self.keyCommand(id: session.id, key: session.key)
+    }
+
+    private static func keyCommand(id: String, key: SymmetricKey) -> String {
+        "auth:v1:\(id):\(key.withUnsafeBytes { hex(Array($0)) })"
     }
 
     /// Forgets the key: no request is accepted until the next session.
