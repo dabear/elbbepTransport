@@ -84,6 +84,15 @@ enum LupedRepublish {
         return pebbleConnected && !enabled.isEmpty && enabled.allSatisfy { !$0.hasWatch }
     }
 
+    /// Republishes without a watch session after which the user is told: the
+    /// services were published again this many times and the watch still doesn't
+    /// open them, which a restart of the app has fixed.
+    static let noticeAfterAttempts = 3
+
+    static func shouldNotify(afterAttempts attempts: Int) -> Bool {
+        attempts >= noticeAfterAttempts
+    }
+
     /// The wait before checking again after the `attempts`th attempt.
     static func checkDelay(afterAttempts attempts: Int) -> TimeInterval {
         min(firstCheckDelay * pow(2, Double(max(attempts - 1, 0))), maximumCheckDelay)

@@ -29,6 +29,10 @@ final class LupedRepublishTests: XCTestCase {
         let waits = (1...7).map { LupedRepublish.checkDelay(afterAttempts: $0) }
         XCTAssertEqual(waits, [90, 180, 360, 720, 1440, 1800, 1800])
     }
+
+    func testUserIsToldAfterThreeRepublishes() {
+        XCTAssertEqual((0...5).map { LupedRepublish.shouldNotify(afterAttempts: $0) }, [false, false, false, true, true, true])
+    }
 }
 
 /// LupedTransport leaves a working session alone. (Republishing itself needs

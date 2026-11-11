@@ -363,6 +363,7 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
 
         self.dataCharacteristic = dataCharacteristic
         publishedService = service
+        record(.info, "Publishing the PPoGATT service (\(PebbleRuntimeContext.current()))")
         manager.add(service)
     }
 

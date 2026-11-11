@@ -201,6 +201,11 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// leave the watch without the reading until the app is opened again. The
     /// host ends it itself if iOS takes the time back first. `nil`: no task.
     public var beginBackgroundTask: (@MainActor (_ name: String) -> (@MainActor () -> Void))?
+    /// The watch link is stalled (`true`): the services were published again
+    /// several times while a Pebble stayed connected, and no watch opened a
+    /// session. `false` when a session opens, and once at the first session of a
+    /// run, so a notice left over from an earlier run is withdrawn.
+    public var linkStalledDidChange: (@MainActor (_ stalled: Bool) -> Void)?
     /// Supplies the current readings and alert state. Returns `nil` while the
     /// host is not ready; throwing logs the error.
     public var snapshotProvider: (() async throws -> LupedSnapshot?)?
@@ -325,6 +330,25 @@ public final class LupedTransport: PebbleTransportDelegate {
     /// without opening them (`LupedRepublish`); reset when a watch subscribes or
     /// the link settings change.
     private var republishAttempts = 0
+    private var linkStalled = false
+    private var announcedFirstSession = false
+
+    private func resetRepublishAttempts() {
+        republishAttempts = 0
+        setLinkStalled(false)
+    }
+
+    private func setLinkStalled(_ stalled: Bool) {
+        guard stalled != linkStalled else { return }
+        linkStalled = stalled
+        status.linkStalled = stalled
+        if stalled {
+            record(.error, "No watch session after \(republishAttempts) republishes while a Pebble is connected: telling the user to close and open \(hostName) again")
+        } else {
+            record(.info, "The watch link works again")
+        }
+        linkStalledDidChange?(stalled)
+    }
 
     public init(hostName: String, settings: LupedSettings) {
         self.hostName = hostName
@@ -631,7 +655,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         let uuid = settings.watchfaceUUID
         record(.info, enabled ? "Watch link settings changed: watchface \(uuid.uuidString.lowercased())" : "Watch link off")
         watchfaceTransport.reconfigure(isEnabled: enabled, appUUID: uuid)
-        republishAttempts = 0
+        resetRepublishAttempts()
         applyRemoteLink()
 
         guard enabled else {
@@ -655,7 +679,7 @@ public final class LupedTransport: PebbleTransportDelegate {
         let uuid = settings.remoteUUID
         guard enabled != remoteTransport.isEnabled || uuid != remoteTransport.appUUID else { return }
         remoteTransport.reconfigure(isEnabled: enabled, appUUID: uuid)
-        republishAttempts = 0
+        resetRepublishAttempts()
         rejectedApps.remove(.remote)
         switchForeground(to: .watchface, enabled ? "Luped Remote's watch session moved to \(uuid.uuidString.lowercased())" : "Luped Remote's watch session was removed")
     }
@@ -674,7 +698,12 @@ public final class LupedTransport: PebbleTransportDelegate {
 
     public func pebbleTransportDidChangeLink(_ source: PebbleTransport) {
         if source.hasWatch {
-            republishAttempts = 0
+            resetRepublishAttempts()
+            if !announcedFirstSession {
+                announcedFirstSession = true
+                // Withdraws a notice an earlier run of the app left behind.
+                linkStalledDidChange?(false)
+            }
         }
         if app(of: source) == .remote {
             if status.remoteLink != source.link {
@@ -723,6 +752,9 @@ public final class LupedTransport: PebbleTransportDelegate {
         record(.info, String(format: "A Pebble is connected to this iPhone, but no watch session for %@: publishing %@ again, as restarting %@ does (attempt %ld; next check in %@)", names.joined(separator: " or "), enabled.count == 1 ? "its service" : "their services", hostName, republishAttempts, wait))
         // Each one checks again `next` seconds after its service is published.
         enabled.forEach { $0.republishService(nextWaitCheckIn: next) }
+        if LupedRepublish.shouldNotify(afterAttempts: republishAttempts) {
+            setLinkStalled(true)
+        }
     }
 
     public func pebbleTransportSessionWillReset(_ source: PebbleTransport) {
@@ -1349,6 +1381,9 @@ public final class LupedLinkStatus: ObservableObject {
         public let milliseconds: Int
     }
 
+    /// The services were published again several times and no watch opened a
+    /// session; the user has been told to close and open the app again.
+    @Published public var linkStalled = false
     /// The watchface's session; the watch shows it whichever app runs.
     @Published public var link = Link.off
     /// Luped Remote's session (off while it isn't served).
