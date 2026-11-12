@@ -279,8 +279,18 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
     /// restoration) published the service but the watch never read it, until
     /// the app was closed and opened again. With one, the watch connects.
     private func makePeripheralManager() -> CBPeripheralManager {
-        let restoreID = "elbbep.ppogatt." + appUUID.uuidString.lowercased()
-        return CBPeripheralManager(delegate: self, queue: .main, options: [CBPeripheralManagerOptionRestoreIdentifierKey: restoreID])
+        let backgroundModes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] ?? []
+        return CBPeripheralManager(delegate: self, queue: .main, options: Self.peripheralManagerOptions(appUUID: appUUID, backgroundModes: backgroundModes))
+    }
+
+    /// iOS throws when a process without the `bluetooth-peripheral` background
+    /// mode asks for restoration (a test runner, a host that doesn't declare it),
+    /// so such a process gets a manager without a restore identifier.
+    nonisolated static func peripheralManagerOptions(appUUID: UUID, backgroundModes: [String]) -> [String: Any] {
+        guard backgroundModes.contains("bluetooth-peripheral") else {
+            return [:]
+        }
+        return [CBPeripheralManagerOptionRestoreIdentifierKey: "elbbep.ppogatt." + appUUID.uuidString.lowercased()]
     }
 
     /// Applies a new enabled state or app UUID. Removing the service ends the
