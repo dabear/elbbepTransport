@@ -458,6 +458,22 @@ public final class LupedTransport: PebbleTransportDelegate {
         return true
     }
 
+    /// After the foreground app gave no reply at all, treated like a rejection:
+    /// sends to the other app if its session is open and it hasn't rejected or
+    /// stayed silent since an app last accepted or sent something, and returns
+    /// `true`. Seen after a reconnect: both sessions opened in the same second,
+    /// Luped Remote's first, and it never answered while the watchface was shown.
+    private func moveOnAfterSilence() -> Bool {
+        rejectedApps.insert(foreground)
+        guard let next = LupedRouting.next(afterRejectionBy: foreground, rejected: rejectedApps, openSessions: openSessions) else {
+            rejectedApps.removeAll()
+            return false
+        }
+        switchForeground(to: next, "\(foreground.name) didn't answer, so it isn't running", keyOnDelivery: true)
+        sendIfNeeded(force: true)
+        return true
+    }
+
     /// The app accepted a message or sent one: it is running.
     private func heard(from app: LupedWatchApp) {
         lastHeard[app] = Date()
@@ -1245,7 +1261,7 @@ public final class LupedTransport: PebbleTransportDelegate {
                 self.findNotDelivered("no reply from the watch")
             }
             self.inflightCommand = nil
-            if self.moveBackAfterSilence() {
+            if self.moveBackAfterSilence() || self.moveOnAfterSilence() {
                 return
             }
             self.sendIfNeeded()
@@ -1316,7 +1332,7 @@ public final class LupedTransport: PebbleTransportDelegate {
             guard !Task.isCancelled, let self, self.inflightPush?.transactionID == transactionID else { return }
             self.record(.error, "#\(transactionID) no reply within \(Int(PebbleAppMessage.ackTimeout)) s")
             self.inflightPush = nil
-            if self.moveBackAfterSilence() {
+            if self.moveBackAfterSilence() || self.moveOnAfterSilence() {
                 return
             }
             self.scheduleRetry()

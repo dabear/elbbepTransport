@@ -9,17 +9,20 @@ final class PebbleWatchProbeTests: XCTestCase {
         XCTAssertFalse(line.contains("Reversed"), line)
     }
 
-    /// A connected Pebble that never opens our service points at reversed PPoGATT.
-    func testConnectedPebbleSuggestsReversedPPoG() {
+    /// A connected Pebble that never opens our service: reopening the app is what helps.
+    func testConnectedPebbleSuggestsReopeningTheApp() {
         let line = PebbleWatchProbe.diagnosis(.init(pebbleConnected: true, offersReversed: false), minutes: 5)
         XCTAssertTrue(line.contains("a Pebble is connected to this iPhone"), line)
-        XCTAssertTrue(line.contains("turn off the debug setting \u{201C}Reversed PPoG\u{201D}"), line)
-        XCTAssertFalse(line.contains("The watch offers reversed PPoGATT"), line)
+        XCTAssertTrue(line.contains("close this app from the app switcher and open it again"), line)
     }
 
-    func testReversedCapableWatchIsNamed() {
-        let line = PebbleWatchProbe.diagnosis(.init(pebbleConnected: true, offersReversed: true), minutes: 5)
-        XCTAssertTrue(line.contains("The watch offers reversed PPoGATT"), line)
+    /// Core Devices watches always offer the reversed services, so they don't
+    /// point at the Pebble app's "Reversed PPoG" debug setting.
+    func testReversedServicesDoNotBlameTheDebugSetting() {
+        for offersReversed in [false, true] {
+            let line = PebbleWatchProbe.diagnosis(.init(pebbleConnected: true, offersReversed: offersReversed), minutes: 5)
+            XCTAssertFalse(line.localizedCaseInsensitiveContains("reversed"), line)
+        }
     }
 
     /// The transport logs again only when the reason changes, not as minutes pass.

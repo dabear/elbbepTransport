@@ -150,6 +150,11 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
 
     private var peripheralManager: CBPeripheralManager?
     private var dataCharacteristic: CBMutableCharacteristic?
+    /// The meta value, served from `didReceiveRead` so every read is logged.
+    private var metaValue = Data()
+    /// Services iOS handed back on restoration; removed once powered on, so the
+    /// transport publishes its own afresh instead of adding a second one.
+    private var restoredServices: [CBMutableService] = []
     /// The one service this transport published; only this one is ever removed.
     private var publishedService: CBMutableService?
     private var isServicePublished: Bool { publishedService != nil }
@@ -266,7 +271,16 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         }
 
         record(.info, String(format: "Watch link on for app %@", appUUID.uuidString.lowercased()))
-        peripheralManager = CBPeripheralManager(delegate: self, queue: .main)
+        peripheralManager = makePeripheralManager()
+    }
+
+    /// With a restore identifier, one per app UUID. Without one, a host that iOS
+    /// launched in the background after a phone restart (for its pump or CGM
+    /// restoration) published the service but the watch never read it, until
+    /// the app was closed and opened again. With one, the watch connects.
+    private func makePeripheralManager() -> CBPeripheralManager {
+        let restoreID = "elbbep.ppogatt." + appUUID.uuidString.lowercased()
+        return CBPeripheralManager(delegate: self, queue: .main, options: [CBPeripheralManagerOptionRestoreIdentifierKey: restoreID])
     }
 
     /// Applies a new enabled state or app UUID. Removing the service ends the
@@ -346,10 +360,12 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         // Encryption required: the watch bonds with LE Secure Connections and only
         // opens PPoGATT once the link is encrypted, so this costs a bonded watch
         // nothing and turns away unencrypted peers.
+        // No static value, so iOS passes each read to `didReceiveRead`.
+        metaValue = meta
         let metaCharacteristic = CBMutableCharacteristic(
             type: PPoGATT.meta,
             properties: .read,
-            value: meta,
+            value: nil,
             permissions: .readEncryptionRequired
         )
         let dataCharacteristic = CBMutableCharacteristic(
@@ -372,6 +388,11 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         defer { updateLink() }
         switch peripheral.state {
         case .poweredOn:
+            if !restoredServices.isEmpty {
+                restoredServices.forEach(peripheral.remove)
+                record(.info, String(format: "Removed %ld restored service(s)", restoredServices.count))
+                restoredServices = []
+            }
             publishService(on: peripheral)
         case .poweredOff, .resetting, .unauthorized, .unsupported:
             // iOS drops published services in these states; publish again on power-on.
@@ -417,6 +438,31 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         closeSession(reason: "watch unsubscribed")
         watch = nil
         scheduleWaitCheck()
+    }
+
+    /// Logs every read of the meta characteristic, which is how the
+    /// watch learns which app a PPoGATT service belongs to before it subscribes.
+    /// No read at all means the watch never got as far as this service.
+    public func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
+        guard request.characteristic.uuid == PPoGATT.meta else {
+            peripheral.respond(to: request, withResult: .requestNotSupported)
+            return
+        }
+        record(.fromWatch, String(format: "Watch %@ read the meta characteristic (offset %ld; %@)", request.central.identifier.uuidString, request.offset, PebbleRuntimeContext.current()))
+        guard request.offset <= metaValue.count else {
+            peripheral.respond(to: request, withResult: .invalidOffset)
+            return
+        }
+        request.value = metaValue.subdata(in: request.offset..<metaValue.count)
+        peripheral.respond(to: request, withResult: .success)
+    }
+
+    /// iOS hands back what this restore identifier had published
+    /// before it creates the manager anew (after iOS ended or relaunched the app).
+    public func peripheralManager(_ peripheral: CBPeripheralManager, willRestoreState dict: [String: Any]) {
+        let services = dict[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService] ?? []
+        restoredServices = services
+        record(.info, String(format: "Restored by iOS with %ld published service(s) (%@); publishing afresh once powered on", services.count, PebbleRuntimeContext.current()))
     }
 
     public func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
@@ -665,7 +711,9 @@ public final class PebbleTransport: NSObject, @preconcurrency CBPeripheralManage
         dataCharacteristic = nil
         peripheralManager?.delegate = nil
         nextWaitCheckDelay = delay
-        peripheralManager = CBPeripheralManager(delegate: self, queue: .main)
+        // Releases the old manager first: two managers must not share a restore identifier.
+        peripheralManager = nil
+        peripheralManager = makePeripheralManager()
     }
 
     private func cancelWaitCheck() {
